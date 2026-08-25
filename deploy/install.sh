@@ -48,7 +48,35 @@ else
         die "\"$DOMAIN\" to domena z przykładu w dokumentacji. Podaj własną, np. panel.gezet.pl"
     fi
 fi
-BASE_URL="https://$DOMAIN"
+
+# Trzeci tryb: hosting, który nie daje portów 80 i 443 na IPv4, tylko kilka
+# własnych portów na adresie współdzielonym (tak działa m.in. Mikr.us).
+# Aplikacja stoi wtedy na przydzielonym porcie, a certyfikat wydaje się przez
+# walidację po IPv6, gdzie port 80 należy już do nas.
+detect_shared_hosting_port() {
+    # Numery portów bywają wypisane w powitaniu po zalogowaniu.
+    grep -hoE '[a-z0-9.-]+\.mikrus\.xyz:[0-9]+' \
+        /etc/motd /etc/motd.d/* /etc/update-motd.d/* /root/.motd 2>/dev/null \
+        | grep -oE '[0-9]+$' | sort -un | tail -1
+}
+
+if [[ "$MODE" == "domain" ]]; then
+    if [[ -z "${HTTPS_PORT:-}" ]]; then
+        HTTPS_PORT="$(detect_shared_hosting_port || true)"
+        [[ -n "$HTTPS_PORT" ]] && echo "Wykryto przydzielony port TCP: $HTTPS_PORT (nadpiszesz zmienną HTTPS_PORT)"
+    fi
+    if [[ -n "${HTTPS_PORT:-}" ]]; then
+        [[ "$HTTPS_PORT" =~ ^[0-9]+$ ]] && (( HTTPS_PORT > 0 && HTTPS_PORT < 65536 )) \
+            || die "HTTPS_PORT=\"$HTTPS_PORT\" nie jest poprawnym numerem portu."
+        MODE="port"
+    fi
+fi
+
+if [[ "$MODE" == "port" ]]; then
+    BASE_URL="https://$DOMAIN:$HTTPS_PORT"
+else
+    BASE_URL="https://$DOMAIN"
+fi
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [[ -d "$SOURCE_DIR/server" && -d "$SOURCE_DIR/client" ]] || die "Nie znaleziono katalogów server/ i client/ obok skryptu."
@@ -179,7 +207,36 @@ mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
 SERVER_IPV4="$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{sub(/\/.*/,"",$2); print $2; exit}')"
 SERVER_IPV6="$(ip -6 addr show scope global 2>/dev/null | awk '/inet6 /{sub(/\/.*/,"",$2); print $2; exit}')"
 
-if [[ "$MODE" == "domain" ]]; then
+if [[ "$MODE" == "port" ]]; then
+    info "Konfiguruję nginx dla $DOMAIN na porcie $HTTPS_PORT"
+    # Wariant startowy: bez TLS, bo certyfikatu jeszcze nie ma, a nginx nie
+    # wstałby wskazując na nieistniejące pliki. Docelowa konfiguracja wchodzi
+    # po wydaniu certyfikatu (krok 11).
+    cat > "$NGINX_SITE" <<NGINXCONF
+server {
+    listen [::]:80;
+    listen 0.0.0.0:$HTTPS_PORT;
+    listen [::]:$HTTPS_PORT;
+    server_name $DOMAIN;
+    server_tokens off;
+    client_max_body_size 512k;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root $ACME_ROOT;
+        default_type "text/plain";
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              \$host;
+        proxy_set_header X-Real-IP         \$remote_addr;
+        proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINXCONF
+elif [[ "$MODE" == "domain" ]]; then
     info "Konfiguruję nginx dla domeny $DOMAIN"
     sed "s/TWOJA-DOMENA.PL/$DOMAIN/g" "$APP_DIR/deploy/nginx.conf" > "$NGINX_SITE"
 
@@ -232,11 +289,18 @@ nginx -t
 systemctl reload nginx
 
 # ── 9. firewall ────────────────────────────────────────────────────────
-info "Konfiguruję firewall (ufw)"
-ufw allow OpenSSH >/dev/null
-ufw allow 'Nginx Full' >/dev/null
-ufw --force enable >/dev/null
-echo "  Port 4000 pozostaje zamknięty dla świata — API jest dostępne wyłącznie przez nginx."
+if command -v ufw >/dev/null 2>&1; then
+    info "Konfiguruję firewall (ufw)"
+    ufw allow OpenSSH >/dev/null
+    ufw allow 'Nginx Full' >/dev/null
+    # W trybie portowym aplikacja słucha na przydzielonym porcie, a nie na 443 —
+    # bez tej reguły ufw odciąłby ją zaraz po włączeniu.
+    [[ "$MODE" == "port" ]] && ufw allow "$HTTPS_PORT/tcp" >/dev/null
+    ufw --force enable >/dev/null
+    echo "  Port 4000 pozostaje zamknięty dla świata — API jest dostępne wyłącznie przez nginx."
+else
+    warn "Nie znaleziono ufw — pomijam konfigurację firewalla."
+fi
 
 # ── 10. weryfikacja ────────────────────────────────────────────────────
 info "Sprawdzam, czy aplikacja odpowiada"
@@ -252,7 +316,54 @@ curl -fsS http://127.0.0.1:4000/api/health >/dev/null 2>&1 \
 
 # ── 11. HTTPS ──────────────────────────────────────────────────────────
 
-if [[ "$MODE" == "ip" ]]; then
+if [[ "$MODE" == "port" ]]; then
+    info "Konfiguruję certyfikat HTTPS dla $DOMAIN"
+
+    # Na współdzielonym IPv4 port 80 nie należy do nas, więc Let's Encrypt musi
+    # dojść po IPv6 — a to wymaga rekordu AAAA wskazującego na ten serwer.
+    RESOLVED_V6="$(getent ahostsv6 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u)"
+
+    if [[ -z "$SERVER_IPV6" ]]; then
+        warn "Ten serwer nie ma publicznego adresu IPv6 — nie ma jak wydać certyfikatu."
+        warn "Na współdzielonym adresie IPv4 port 80 należy do dostawcy hostingu."
+        BASE_URL="http://$DOMAIN:$HTTPS_PORT"
+    elif [[ -z "$RESOLVED_V6" ]]; then
+        warn "Domena $DOMAIN nie ma rekordu AAAA — pomijam certyfikat."
+        warn "Załóż rekord:  AAAA  $DOMAIN  →  $SERVER_IPV6"
+        warn "Bez niego Let's Encrypt nie ma jak potwierdzić, że serwer jest Wasz:"
+        warn "na współdzielonym IPv4 port 80 obsługuje dostawca hostingu, nie Wy."
+        warn "Po propagacji uruchom skrypt ponownie."
+        BASE_URL="http://$DOMAIN:$HTTPS_PORT"
+    elif ! grep -qx "$SERVER_IPV6" <<< "$RESOLVED_V6"; then
+        warn "Rekord AAAA domeny $DOMAIN wskazuje na inny adres niż ten serwer."
+        warn "  w DNS:      $(tr '\n' ' ' <<< "$RESOLVED_V6")"
+        warn "  ten serwer: $SERVER_IPV6"
+        BASE_URL="http://$DOMAIN:$HTTPS_PORT"
+    else
+        info "Wystawiam certyfikat (walidacja po IPv6)"
+        if apt-get install -y -qq certbot >/dev/null &&
+           certbot certonly --webroot --webroot-path "$ACME_ROOT" -d "$DOMAIN" \
+               --non-interactive --agree-tos --register-unsafely-without-email \
+               --keep-until-expiring; then
+
+            info "Włączam HTTPS w nginx"
+            sed -e "s/DOMENA_APLIKACJI/$DOMAIN/g" -e "s/PORT_HTTPS/$HTTPS_PORT/g" \
+                "$APP_DIR/deploy/nginx-mikrus.conf" > "$NGINX_SITE"
+            nginx -t && systemctl reload nginx
+            # Odnawianie obsługuje timer certbota z pakietu; dokładamy tylko
+            # przeładowanie nginx po odnowieniu.
+            mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+            printf '#!/bin/sh\nsystemctl reload nginx\n' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+            chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+            echo "  Certyfikat wydany, odnawianie automatyczne."
+        else
+            warn "Nie udało się wystawić certyfikatu — aplikacja działa po HTTP."
+            warn "Sprawdź, czy port 80 po IPv6 jest osiągalny z internetu."
+            BASE_URL="http://$DOMAIN:$HTTPS_PORT"
+        fi
+    fi
+
+elif [[ "$MODE" == "ip" ]]; then
     info "Konfiguruję certyfikat HTTPS dla adresu $DOMAIN"
 
     # Adres musi faktycznie należeć do tego serwera — Let's Encrypt sprawdzi to

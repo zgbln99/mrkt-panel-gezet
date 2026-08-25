@@ -155,6 +155,48 @@ zapasową, konfiguruje nginx-a, firewall oraz certyfikat HTTPS.
 Jest idempotentny — można go uruchomić ponownie; istniejącej bazy ani `.env`
 nie nadpisuje.
 
+### Hosting bez portów 80 i 443 (współdzielony adres IPv4)
+
+Część tanich hostingów — m.in. **Mikr.us** — nie daje własnego adresu IPv4.
+Adres jest współdzielony między klientów, a Ty dostajesz kilka własnych portów
+TCP (np. `20145`, `30145`) oraz **pełny, własny adres IPv6**.
+
+Portów 80 i 443 na IPv4 nie da się w takiej sytuacji użyć. Działa natomiast
+układ, w którym:
+
+- aplikacja stoi na **przydzielonym porcie** — dostępna po IPv4 i po IPv6,
+- certyfikat Let's Encrypt wydaje się przez **walidację po IPv6**, gdzie port 80
+  należy już do Ciebie,
+- dodatkowo aplikacja słucha na standardowym `443` po IPv6.
+
+Instalacja — port podaje się zmienną `HTTPS_PORT`:
+
+```bash
+sudo HTTPS_PORT=30145 bash deploy/install.sh mrkt.gezet.pl
+```
+
+Skrypt sam wykryje port z powitania serwera, jeśli go tam zapisano; zmienna ma
+pierwszeństwo.
+
+**Rekordy DNS — oba są potrzebne:**
+
+```
+A     mrkt.gezet.pl  →  <współdzielony adres IPv4 hostingu>
+AAAA  mrkt.gezet.pl  →  <adres IPv6 Twojego serwera>
+```
+
+Rekord **AAAA nie jest tu opcjonalny**: to jedyna droga, którą Let's Encrypt
+potwierdzi, że serwer należy do Ciebie. Na współdzielonym IPv4 port 80 obsługuje
+dostawca hostingu, więc walidacja po IPv4 nigdy nie trafi do Twojej aplikacji.
+
+**Adres dla zespołu:** `https://mrkt.gezet.pl:30145` — działa w każdej sieci.
+Wersja bez portu (`https://mrkt.gezet.pl`) zadziała wyłącznie tam, gdzie jest
+IPv6, więc lepiej rozdać zespołowi tę pierwszą.
+
+Numer portu w adresie bywa blokowany przez restrykcyjne firewalle firmowe —
+warto to sprawdzić z sieci, z której zespół faktycznie korzysta, zanim rozda się
+adres wszystkim.
+
 ### Serwer za NAT-em (adres prywatny)
 
 Jeśli `ip -4 addr` pokazuje adres z puli prywatnej (`192.168.x.x`, `10.x.x.x`,
@@ -306,6 +348,7 @@ w katalogu `deploy/`:
 |---|---|
 | `deploy/nginx.conf` | reverse proxy dla domeny — cache statyki, limit żądań |
 | `deploy/nginx-ip.conf` | wariant bez domeny: HTTPS pod samym adresem IPv4 |
+| `deploy/nginx-mikrus.conf` | hosting bez portów 80/443: HTTPS na przydzielonym porcie |
 | `deploy/gezet-marketing.service` | usługa systemd (z ograniczeniami dostępu do systemu) |
 | `deploy/gezet-backup.service` + `.timer` | codzienna kopia zapasowa o 2:30 |
 | `deploy/gezet-certbot-renew.service` + `.timer` | odnawianie krótkiego certyfikatu dla adresu IP |

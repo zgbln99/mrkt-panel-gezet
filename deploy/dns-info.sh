@@ -34,6 +34,12 @@ PUBLIC_V6="$(tr -d '[:space:]' <<< "$PUBLIC_V6")"
 IPV6_PUBLIC=0
 if [[ "$GLOBAL_V6" =~ ^[23] ]]; then IPV6_PUBLIC=1; fi
 
+# Część hostingów nie daje portów 80 i 443 na IPv4 (adres jest współdzielony),
+# tylko kilka własnych portów — numery bywają w powitaniu po zalogowaniu.
+SHARED_PORTS="$(grep -hoE '[a-z0-9.-]+\.mikrus\.xyz:[0-9]+' \
+    /etc/motd /etc/motd.d/* /etc/update-motd.d/* /root/.motd 2>/dev/null \
+    | grep -oE '[0-9]+$' | sort -un | tr '\n' ' ')"
+
 GATEWAY_V4="$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')"
 GATEWAY_V6="$(ip -6 route 2>/dev/null | awk '/^default/{print $3; exit}')"
 IFACE="$(ip route 2>/dev/null | awk '/^default/{print $5; exit}')"
@@ -60,8 +66,12 @@ fi
 TARGET="$PRIVATE_V4"
 
 if [[ $BEHIND_NAT -eq 1 ]]; then
-    warn "Serwer stoi za NAT-em — adres $PRIVATE_V4 działa tylko w sieci lokalnej."
-    warn "W DNS trzeba wpisać adres publiczny, a na routerze przekierować porty."
+    if [[ -n "$SHARED_PORTS" ]]; then
+        warn "Serwer nie ma własnego adresu IPv4 — korzysta ze współdzielonego."
+    else
+        warn "Serwer stoi za NAT-em — adres $PRIVATE_V4 działa tylko w sieci lokalnej."
+        warn "W DNS trzeba wpisać adres publiczny, a na routerze przekierować porty."
+    fi
     TARGET="${PUBLIC_V4:-<PUBLICZNY-ADRES-TWOJEJ-SIECI>}"
 
     if [[ "$PUBLIC_V4" =~ ^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\. ]]; then
@@ -71,6 +81,25 @@ if [[ $BEHIND_NAT -eq 1 ]]; then
         warn "z internetu w ogóle do Was nie dotrą. Potrzebny będzie publiczny"
         warn "adres od operatora albo tunel (np. Cloudflare Tunnel)."
     fi
+    if [[ -n "$SHARED_PORTS" ]]; then
+        # Hosting ze współdzielonym IPv4 — przekierowania portów nie ma jak
+        # ustawić, bo porty 80 i 443 należą do dostawcy, nie do nas.
+        echo
+        bold "To hosting ze współdzielonym adresem IPv4"
+        echo "  Przydzielone Wam porty TCP: $SHARED_PORTS"
+        echo "  Portów 80 i 443 na IPv4 nie da się użyć — należą do dostawcy."
+        echo
+        echo "  Działająca konfiguracja:"
+        echo "    • aplikacja na przydzielonym porcie — dostępna po IPv4 i IPv6"
+        echo "    • certyfikat wydany przez walidację po IPv6 (tam port 80 jest Wasz)"
+        echo "    • rekord AAAA jest OBOWIĄZKOWY, bez niego certyfikatu nie będzie"
+        echo
+        echo "  Instalacja:"
+        echo "    sudo HTTPS_PORT=${SHARED_PORTS%% *} bash deploy/install.sh ${DOMAIN:-twoja.domena.pl}"
+        echo
+        echo "  Adres dla zespołu: https://${DOMAIN:-twoja.domena.pl}:${SHARED_PORTS%% *}"
+        echo
+    else
     echo
     bold "Przekierowanie portów trzeba ustawić NIE tutaj, tylko na urządzeniu"
     bold "o adresie ${GATEWAY_V4:-<brama domyślna>} — to ono ma adres publiczny $PUBLIC_V4."
@@ -84,6 +113,7 @@ if [[ $BEHIND_NAT -eq 1 ]]; then
     echo "  Nie masz do niej dostępu? Zostają dwie drogi bez przekierowania portów:"
     echo "    • wyłącznie IPv6 (rekord AAAA) — działa od ręki, ale klienci bez IPv6 nie wejdą"
     echo "    • tunel (np. Cloudflare Tunnel) — połączenie wychodzi z serwera, działa dla wszystkich"
+    fi
 else
     ok "Serwer ma publiczny adres IPv4 — przekierowanie portów niepotrzebne."
 fi
@@ -103,7 +133,11 @@ echo
 # Rekord AAAA zależy WYŁĄCZNIE od tego, czy serwer ma publiczny, routowany
 # adres IPv6 — z NAT-em na IPv4 nie ma to nic wspólnego.
 if [[ $IPV6_PUBLIC -eq 1 ]]; then
-    bold "Rekord AAAA (IPv6) — dopiero po sprawdzeniu"
+    if [[ -n "$SHARED_PORTS" ]]; then
+        bold "Rekord AAAA (IPv6) — OBOWIĄZKOWY przy współdzielonym IPv4"
+    else
+        bold "Rekord AAAA (IPv6) — dopiero po sprawdzeniu"
+    fi
     echo "  Typ rekordu:  AAAA"
     echo "  Adres IPv6:   $GLOBAL_V6"
     if [[ "$PUBLIC_V6" == "$GLOBAL_V6" ]]; then
@@ -115,11 +149,16 @@ if [[ $IPV6_PUBLIC -eq 1 ]]; then
         warn "Brak łączności IPv6 na zewnątrz — rekordu AAAA na razie nie zakładaj."
     fi
     echo
-    warn "WAŻNE: Let's Encrypt przy istniejącym rekordzie AAAA próbuje walidacji"
-    warn "najpierw po IPv6. Jeśli ruch przychodzący po IPv6 nie dochodzi, certyfikat"
-    warn "nie zostanie wystawiony — mimo poprawnie działającego IPv4."
-    warn "Bezpieczna kolejność: najpierw uruchom wszystko na IPv4, a rekord AAAA"
-    warn "dodaj później i od razu sprawdź, czy certyfikat nadal się odnawia."
+    if [[ -n "$SHARED_PORTS" ]]; then
+        warn "Przy współdzielonym IPv4 rekord AAAA NIE jest opcjonalny: to jedyna droga,"
+        warn "którą Let's Encrypt potwierdzi, że serwer należy do Was."
+    else
+        warn "WAŻNE: Let's Encrypt przy istniejącym rekordzie AAAA próbuje walidacji"
+        warn "najpierw po IPv6. Jeśli ruch przychodzący po IPv6 nie dochodzi, certyfikat"
+        warn "nie zostanie wystawiony — mimo poprawnie działającego IPv4."
+        warn "Bezpieczna kolejność: najpierw uruchom wszystko na IPv4, a rekord AAAA"
+        warn "dodaj później i od razu sprawdź, czy certyfikat nadal się odnawia."
+    fi
     echo
 else
     warn "Nie zakładaj rekordu AAAA — ten serwer nie ma publicznego adresu IPv6."
@@ -153,15 +192,28 @@ if [[ -n "$DOMAIN" ]]; then
     echo
 fi
 
-if [[ $BEHIND_NAT -eq 1 && -n "$PUBLIC_V4" && -n "$DOMAIN" ]]; then
-    bold "Jak sprawdzić przekierowanie portów (z innego komputera lub telefonu w sieci komórkowej)"
-    echo "  curl -H \"Host: $DOMAIN\" http://$PUBLIC_V4/api/health"
-    echo
-    echo "  Samo otwarcie http://$PUBLIC_V4/ w przeglądarce NIE zadziała i tak ma być:"
-    echo "  nginx odrzuca żądania bez pasującej nazwy hosta (patrz README, Bezpieczeństwo)."
-    echo
+if [[ -n "$DOMAIN" ]]; then
+    if [[ -n "$SHARED_PORTS" ]]; then
+        bold "Jak sprawdzić dostępność po instalacji (z dowolnego komputera)"
+        echo "  curl https://$DOMAIN:${SHARED_PORTS%% *}/api/health"
+        echo
+        echo "  Samo https://$DOMAIN (bez portu) zadziała wyłącznie z sieci z IPv6 —"
+        echo "  na IPv4 port 443 należy do dostawcy hostingu, nie do Was."
+        echo
+    elif [[ $BEHIND_NAT -eq 1 && -n "$PUBLIC_V4" ]]; then
+        bold "Jak sprawdzić przekierowanie portów (z innego komputera lub telefonu w sieci komórkowej)"
+        echo "  curl -H \"Host: $DOMAIN\" http://$PUBLIC_V4/api/health"
+        echo
+        echo "  Samo otwarcie http://$PUBLIC_V4/ w przeglądarce NIE zadziała i tak ma być:"
+        echo "  nginx odrzuca żądania bez pasującej nazwy hosta (patrz README, Bezpieczeństwo)."
+        echo
+    fi
 fi
 
 bold "Gdy DNS zacznie wskazywać poprawnie"
-echo "  sudo bash deploy/install.sh ${DOMAIN:-twoja.domena.pl}"
+if [[ -n "$SHARED_PORTS" ]]; then
+    echo "  sudo HTTPS_PORT=${SHARED_PORTS%% *} bash deploy/install.sh ${DOMAIN:-twoja.domena.pl}"
+else
+    echo "  sudo bash deploy/install.sh ${DOMAIN:-twoja.domena.pl}"
+fi
 echo
