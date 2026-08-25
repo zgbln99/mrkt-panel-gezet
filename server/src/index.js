@@ -16,6 +16,8 @@ const notificationsRoutes = require('./routes/notifications.routes');
 const metaRoutes = require('./routes/meta.routes');
 const usersRoutes = require('./routes/users.routes');
 const pushRoutes = require('./routes/push.routes');
+const push = require('./lib/push');
+const fcm = require('./lib/fcm');
 
 const pkg = require('../package.json');
 
@@ -127,7 +129,14 @@ app.use('/api', apiLimiter);
 /* --------------------------------- trasy --------------------------------- */
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, version: pkg.version, uptime: Math.round(process.uptime()) });
+  res.json({
+    ok: true,
+    version: pkg.version,
+    uptime: Math.round(process.uptime()),
+    // Widoczne w monitoringu: po wdrożeniu od razu wiadomo, czy powiadomienia
+    // idą przez Firebase, czy nadal przez przekaźnik Expo.
+    push: push.transportName(),
+  });
 });
 
 app.post('/api/auth/login', loginLimiter, (req, _res, next) => {
@@ -209,6 +218,10 @@ const server = app.listen(config.port, config.host, () => {
     `Gezet Marketing API v${pkg.version} — nasłuchuje na http://${config.host}:${config.port} ` +
       `(tryb: ${config.nodeEnv}, baza: ${config.dbPath})`
   );
+  console.log(`Powiadomienia push: ${push.transportName()}`);
+  if (fcm.getLoadError()) {
+    console.warn(`Uwaga: ${fcm.getLoadError()} — powiadomienia pójdą przez przekaźnik Expo.`);
+  }
   if (!config.isProduction) {
     console.log('Uwaga: NODE_ENV nie jest ustawione na "production" — na serwerze produkcyjnym ustaw je w .env.');
   }

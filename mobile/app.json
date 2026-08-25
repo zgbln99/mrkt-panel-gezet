@@ -8,9 +8,11 @@
     "scheme": "gezet",
     "userInterfaceStyle": "automatic",
     "primaryColor": "#2B6777",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "android": {
-      "package": "pl.grupagezet.marketing",
+      "package": "com.gezetmrkt.app",
       "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#2B6777",
@@ -19,12 +21,19 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "permissions": ["android.permission.POST_NOTIFICATIONS"],
-      "blockedPermissions": ["android.permission.RECORD_AUDIO"]
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE",
+        "android.permission.RECEIVE_BOOT_COMPLETED"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
+      "googleServicesFile": "./google-services.json"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "pl.grupagezet.marketing"
+      "bundleIdentifier": "com.gezetmrkt.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -37,15 +46,18 @@
           "imageWidth": 180,
           "resizeMode": "contain",
           "backgroundColor": "#F0F2ED",
-          "dark": { "backgroundColor": "#10151A" }
+          "dark": {
+            "backgroundColor": "#10151A"
+          }
         }
       ],
       [
         "expo-notifications",
         {
-          "icon": "./assets/android-icon-monochrome.png",
+          "icon": "./assets/notification-icon.png",
           "color": "#2B6777",
-          "defaultChannel": "default"
+          "defaultChannel": "default",
+          "enableBackgroundRemoteNotifications": false
         }
       ],
       "expo-secure-store"

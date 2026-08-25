@@ -12,6 +12,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const http = require('http');
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gezet-smoke-'));
 
@@ -24,7 +25,11 @@ process.env.CLIENT_ORIGIN = '';
 process.env.BCRYPT_ROUNDS = '10'; // szybciej w teście; produkcja używa 12
 process.env.LOG_REQUESTS = 'false';
 process.env.TRUST_PROXY = '0';
-process.env.PUSH_ENABLED = 'false'; // test nie wychodzi do internetu
+process.env.PUSH_ENABLED = 'true';
+// Wysyłkę kierujemy na lokalną atrapę — test niczego nie wysyła do internetu,
+// a mimo to sprawdza, że akcja w API kończy się powiadomieniem na telefon.
+const PUSH_STUB_PORT = process.env.SMOKE_PUSH_PORT || '45872';
+process.env.PUSH_ENDPOINT = `http://127.0.0.1:${PUSH_STUB_PORT}/push`;
 
 const BASE = `http://127.0.0.1:${process.env.PORT}`;
 
@@ -60,6 +65,25 @@ async function call(method, endpoint, { body, token } = {}) {
 }
 
 async function main() {
+  // Atrapa przekaźnika push: zbiera wiadomości, które serwer chciał wysłać.
+  const pushMessages = [];
+  const pushStub = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
+    req.on('end', () => {
+      try {
+        pushMessages.push(...JSON.parse(body));
+      } catch {
+        /* nie-JSON w teście nas nie interesuje */
+      }
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ data: [] }));
+    });
+  });
+  await new Promise((resolve) => pushStub.listen(Number(process.env.SMOKE_PUSH_PORT || 45872), '127.0.0.1', resolve));
+
   require('../src/index');
   const db = require('../src/db');
   const { hashPassword } = require('../src/auth');
@@ -241,33 +265,77 @@ async function main() {
   check('nowe hasło z resetu działa', reloginAfterReset.status === 200);
   check('konto po resecie znów wymaga zmiany hasła', reloginAfterReset.data.user.mustChangePassword === true);
 
-  console.log('\n· Powiadomienia push (rejestracja urządzenia)');
-  const badToken = await call('POST', '/api/push/register', { token: piotrChanged.data.token, body: { token: 'nie-token' } });
-  check('nieprawidłowy token urządzenia odrzucony (400)', badToken.status === 400);
+  console.log('\n· Powiadomienia push (rejestracja urządzeń)');
+  const push = require('../src/lib/push');
+  const fcm = require('../src/lib/fcm');
+
+  const badToken = await call('POST', '/api/push/register', {
+    token: piotrChanged.data.token,
+    body: { token: 'nie-token', kind: 'expo', deviceId: 'dev-1' },
+  });
+  check('nieprawidłowy token Expo odrzucony (400)', badToken.status === 400);
+
+  const badKind = await call('POST', '/api/push/register', {
+    token: piotrChanged.data.token,
+    body: { token: 'ExpoPushToken[abc]', kind: 'sms', deviceId: 'dev-1' },
+  });
+  check('nieznany rodzaj tokenu odrzucony (400)', badKind.status === 400);
 
   const pushAnon = await call('POST', '/api/push/register', { body: { token: 'ExpoPushToken[abc]' } });
   check('rejestracja tokenu wymaga zalogowania (401)', pushAnon.status === 401);
 
-  const pushReg = await call('POST', '/api/push/register', {
+  const regExpo = await call('POST', '/api/push/register', {
     token: piotrChanged.data.token,
-    body: { token: 'ExpoPushToken[smoke-test-device]', platform: 'android' },
+    body: { token: 'ExpoPushToken[smoke-device-1]', kind: 'expo', deviceId: 'dev-1', platform: 'android' },
   });
-  check('rejestracja tokenu urządzenia działa', pushReg.status === 200);
+  check('rejestracja tokenu Expo działa', regExpo.status === 200);
+
+  const regFcm = await call('POST', '/api/push/register', {
+    token: piotrChanged.data.token,
+    body: { token: 'fcm-registration-token-abcdefghijklmnop', kind: 'fcm', deviceId: 'dev-1', platform: 'android' },
+  });
+  check('rejestracja tokenu FCM działa', regFcm.status === 200);
+  check('oba tokeny jednego urządzenia zapisane osobno',
+    db.prepare('SELECT COUNT(*) AS n FROM push_tokens WHERE device_id = ?').get('dev-1').n === 2);
   check('token zapisany przy właściwym koncie',
-    db.prepare('SELECT user_id FROM push_tokens WHERE token = ?').get('ExpoPushToken[smoke-test-device]').user_id === 'piotr');
+    db.prepare('SELECT user_id FROM push_tokens WHERE token = ?').get('ExpoPushToken[smoke-device-1]').user_id === 'piotr');
 
   const pushReReg = await call('POST', '/api/push/register', {
     token: piotrChanged.data.token,
-    body: { token: 'ExpoPushToken[smoke-test-device]', platform: 'android' },
+    body: { token: 'ExpoPushToken[smoke-device-1]', kind: 'expo', deviceId: 'dev-1', platform: 'android' },
   });
   check('ponowna rejestracja nie duplikuje wpisu',
-    pushReReg.status === 200 && db.prepare('SELECT COUNT(*) AS n FROM push_tokens').get().n === 1);
+    pushReReg.status === 200 && db.prepare('SELECT COUNT(*) AS n FROM push_tokens').get().n === 2);
+
+  // Sedno routingu: urządzenie zgłaszające oba tokeny musi dostać dokładnie
+  // jedno powiadomienie, a nie dwa.
+  const rows = db.prepare('SELECT token, kind, device_id FROM push_tokens WHERE user_id = ?').all('piotr');
+  const chosen = push.pickTokens(rows);
+  check('jedno urządzenie = jedno powiadomienie', chosen.length === 1, `wybrano ${chosen.length}`);
+  check('bez klucza FCM wybierana jest droga Expo',
+    !fcm.isConfigured() && chosen[0].kind === 'expo', `wybrano ${chosen[0] && chosen[0].kind}`);
+
+  // Drugie urządzenie tej samej osoby to osobne powiadomienie.
+  await call('POST', '/api/push/register', {
+    token: piotrChanged.data.token,
+    body: { token: 'ExpoPushToken[smoke-device-2]', kind: 'expo', deviceId: 'dev-2', platform: 'android' },
+  });
+  check('drugie urządzenie dostaje własne powiadomienie',
+    push.pickTokens(db.prepare('SELECT token, kind, device_id FROM push_tokens WHERE user_id = ?').all('piotr')).length === 2);
 
   const pushOut = await call('POST', '/api/push/unregister', {
     token: piotrChanged.data.token,
-    body: { token: 'ExpoPushToken[smoke-test-device]' },
+    body: { deviceId: 'dev-1' },
   });
-  check('wyrejestrowanie usuwa token', pushOut.status === 200 && db.prepare('SELECT COUNT(*) AS n FROM push_tokens').get().n === 0);
+  check('wyrejestrowanie kasuje oba tokeny urządzenia',
+    pushOut.status === 200 && db.prepare('SELECT COUNT(*) AS n FROM push_tokens WHERE device_id = ?').get('dev-1').n === 0);
+  check('urządzenia innych osób zostają nietknięte',
+    db.prepare('SELECT COUNT(*) AS n FROM push_tokens').get().n === 1);
+
+  const healthPush = await call('GET', '/api/health');
+  check('health opisuje używaną drogę powiadomień',
+    typeof healthPush.data.push === 'string' && healthPush.data.push.length > 0, healthPush.data.push);
+
 
   console.log('\n· Usuwanie zgłoszeń');
   const requestId = adminView.data.requests[0].id;
@@ -284,6 +352,38 @@ async function main() {
   const orphanAssignees = db.prepare('SELECT COUNT(*) AS n FROM task_assignees').get().n;
   check('kasowanie kaskadowe usunęło zadania', orphanTasks === 0, `zostało ${orphanTasks}`);
   check('kasowanie kaskadowe usunęło przypisania', orphanAssignees === 0, `zostało ${orphanAssignees}`);
+
+  console.log('\n· Powiadomienie faktycznie wychodzi na telefon');
+  await call('POST', '/api/push/register', {
+    token: piotrChanged.data.token,
+    body: { token: 'ExpoPushToken[telefon-piotra]', kind: 'expo', deviceId: 'telefon-piotra', platform: 'android' },
+  });
+  pushMessages.length = 0;
+
+  // Zgłoszenie typu "nowy model" tworzy m.in. sesję foto przypisaną Piotrowi.
+  await call('POST', '/api/requests', {
+    body: { name: 'Marek Nowak', triggers: ['new_model'], brand: 'Kia', model: 'Sportage' },
+  });
+  // Wysyłka rusza przez setImmediate po zatwierdzeniu transakcji.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  const toPiotr = pushMessages.find((m) => m.to === 'ExpoPushToken[telefon-piotra]');
+  check('nowe zadanie wysyła powiadomienie na telefon wykonawcy', !!toPiotr,
+    `wysłano ${pushMessages.length} wiadomości`);
+  check('powiadomienie ma tytuł mówiący, czego dotyczy',
+    !!toPiotr && toPiotr.title === 'Nowe zadanie', toPiotr && toPiotr.title);
+  check('treść powiadomienia nie powtarza tytułu',
+    !!toPiotr && !toPiotr.body.startsWith('Nowe zadanie'), toPiotr && toPiotr.body);
+  check('powiadomienie ma dźwięk i wysoki priorytet',
+    !!toPiotr && toPiotr.sound === 'default' && toPiotr.priority === 'high' && toPiotr.channelId === 'default');
+  check('powiadomienie niesie identyfikator zadania do otwarcia',
+    !!toPiotr && !!toPiotr.data && !!toPiotr.data.taskId, toPiotr && JSON.stringify(toPiotr.data));
+
+  const toUnregistered = pushMessages.find((m) => m.to === 'ExpoPushToken[smoke-device-1]');
+  check('urządzenie wyrejestrowane nie dostaje powiadomień', !toUnregistered);
+
+  pushStub.close();
+
 }
 
 main()

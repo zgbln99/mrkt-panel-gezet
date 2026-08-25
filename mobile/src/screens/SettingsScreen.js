@@ -18,6 +18,7 @@ export default function SettingsScreen() {
   const [message, setMessage] = useState('');
   const [messageTone, setMessageTone] = useState('ok');
   const [pushStatus, setPushStatus] = useState('sprawdzanie…');
+  const [transport, setTransport] = useState('');
 
   useEffect(() => {
     Notifications.getPermissionsAsync()
@@ -55,16 +56,31 @@ export default function SettingsScreen() {
     setBusy(true);
     const result = await registerForPush();
     setBusy(false);
-    setMessageTone(result.ok ? 'ok' : 'warn');
-    setMessage(
-      result.ok
-        ? 'Urządzenie zarejestrowane do powiadomień.'
-        : result.reason === 'denied'
+
+    const registered = result.fcm || result.expo;
+    setMessageTone(registered ? 'ok' : 'warn');
+    if (registered) {
+      // Rozróżnienie ma znaczenie przy diagnozowaniu: „tylko Expo" oznacza,
+      // że build nie ma konfiguracji Firebase i powiadomienia idą naokoło.
+      setTransport(
+        result.fcm && result.expo
+          ? 'Firebase (FCM) oraz zapasowo Expo'
+          : result.fcm
+            ? 'Firebase (FCM)'
+            : 'przekaźnik Expo'
+      );
+      setMessage('Urządzenie zarejestrowane do powiadomień.');
+    } else {
+      setTransport('');
+      setMessage(
+        result.reason === 'denied'
           ? 'Powiadomienia są zablokowane — włącz je w ustawieniach systemu Android dla tej aplikacji.'
           : result.reason === 'emulator'
             ? 'Powiadomienia push działają wyłącznie na fizycznym urządzeniu.'
-            : 'Nie udało się zarejestrować urządzenia do powiadomień.'
-    );
+            : 'Nie udało się zarejestrować urządzenia. Sprawdź połączenie i spróbuj ponownie.'
+      );
+    }
+
     const { status } = await Notifications.getPermissionsAsync();
     setPushStatus(status === 'granted' ? 'włączone' : 'zablokowane w ustawieniach systemu');
   };
@@ -93,9 +109,19 @@ export default function SettingsScreen() {
         <Text style={[styles.row, { color: colors.inkSoft }]}>
           Stan uprawnień: <Text style={{ color: colors.ink, fontWeight: '600' }}>{pushStatus}</Text>
         </Text>
+        {transport ? (
+          <Text style={[styles.row, { color: colors.inkSoft }]}>
+            Droga wysyłki: <Text style={{ color: colors.ink, fontWeight: '600' }}>{transport}</Text>
+          </Text>
+        ) : null}
         <Text style={[styles.hint, { color: colors.inkFaint }]}>
           Powiadomienia informują o nowym zadaniu i o zadaniu przekazanym przez kogoś z zespołu.
-          Lista powiadomień w aplikacji działa niezależnie od uprawnień systemowych.
+          Przychodzą z dźwiękiem i banerem na ekranie. Lista powiadomień w aplikacji działa
+          niezależnie od uprawnień systemowych.
+        </Text>
+        <Text style={[styles.hint, { color: colors.inkFaint }]}>
+          Jeśli powiadomienia nie przychodzą, sprawdź w ustawieniach Androida, czy aplikacja nie jest
+          objęta oszczędzaniem baterii — część nakładek producentów wstrzymuje wtedy powiadomienia.
         </Text>
         <Button title="Zarejestruj to urządzenie ponownie" onPress={retryPush} busy={busy} style={{ marginTop: 12 }} />
       </Card>

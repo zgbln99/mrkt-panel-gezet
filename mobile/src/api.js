@@ -145,8 +145,12 @@ export const api = {
     request(`/notifications/${encodeURIComponent(id)}/read`, { method: 'POST', auth: true }),
   markAllNotificationsRead: () => request('/notifications/read-all', { method: 'POST', auth: true }),
 
-  registerPushToken: (pushToken, platform) =>
-    request('/push/register', { method: 'POST', auth: true, body: { token: pushToken, platform } }),
-  unregisterPushToken: (pushToken) =>
-    request('/push/unregister', { method: 'POST', auth: true, body: { token: pushToken } }),
+  registerPushToken: ({ token: pushToken, kind, deviceId, platform }) =>
+    request('/push/register', {
+      method: 'POST',
+      auth: true,
+      body: { token: pushToken, kind, deviceId, platform },
+    }),
+  unregisterPushToken: ({ deviceId, token: pushToken }) =>
+    request('/push/unregister', { method: 'POST', auth: true, body: { deviceId, token: pushToken } }),
 };

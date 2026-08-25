@@ -8,6 +8,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 // wszystkie ich pliki .ttf (ponad 3 MB), choć używamy wyłącznie Ionicons.
 import Ionicons from '@expo/vector-icons/Ionicons';
 
+import { navigationRef, flushPendingTask } from './navigationRef';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { useTheme } from '../theme';
@@ -113,7 +114,7 @@ export default function RootNavigator() {
   }
 
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer theme={navTheme} ref={navigationRef} onReady={flushPendingTask}>
       {!apiUrl ? (
         <Stack.Navigator screenOptions={screenOptions}>
           <Stack.Screen name="Setup" component={SetupScreen} options={{ headerShown: false }} />

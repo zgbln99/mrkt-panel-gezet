@@ -98,9 +98,12 @@ router.post('/:id/transfer', requireAuth, blockUntilPasswordChanged, (req, res) 
     updateTransferLog.run(JSON.stringify(log.slice(-50)), now, task.id);
 
     const fromUser = selectUserName.get(fromUserId);
+    const fromName = fromUser ? fromUser.name : fromUserId;
     store.pushNotification({
       userId: toUserId,
-      text: `${fromUser ? fromUser.name : fromUserId} przekazał(a) Ci zadanie: „${task.title}”${note ? ' — ' + note : ''}`,
+      text: `${fromName} przekazał(a) Ci zadanie: „${task.title}”${note ? ' — ' + note : ''}`,
+      title: `Zadanie od: ${fromName}`,
+      pushBody: `${task.title}${note ? ` — ${note}` : ''}`,
       requestId: task.request_id,
       taskId: task.id,
     });

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { AppState } from 'react-native';
 import { api } from '../api';
+import { setBadge } from '../push';
 import { useAuth } from './AuthContext';
 
 const DataContext = createContext(null);
@@ -31,6 +32,9 @@ export function DataProvider({ children }) {
       setRequests(r.requests);
       setNotifications(n.notifications);
       setOffline(false);
+      // Plakietka na ikonie aplikacji — jedyna informacja o nieprzeczytanych
+      // widoczna bez otwierania aplikacji.
+      setBadge(n.notifications.filter((notification) => !notification.read).length);
     } catch (err) {
       // Utrata zasięgu jest na telefonie normalna — pokazujemy znacznik
       // zamiast wyrzucać użytkownika z ekranu.

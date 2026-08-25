@@ -1,4 +1,5 @@
 import React from 'react';
+import { Alert } from 'react-native';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import * as SecureStore from 'expo-secure-store';
 import App from '../App';
@@ -155,5 +156,38 @@ describe('panel zalogowanego użytkownika', () => {
   it('rejestruje urządzenie do powiadomień push po zalogowaniu', async () => {
     const server = await loggedIn();
     await waitFor(() => expect(server.state.calls).toContain('POST /push/register'));
+  });
+
+  it('zgłasza token FCM i token Expo pod wspólnym identyfikatorem urządzenia', async () => {
+    const server = await loggedIn();
+    // Wspólny deviceId jest tym, po czym serwer poznaje, że to jeden telefon,
+    // i wysyła powiadomienie tylko jedną drogą zamiast dwóch.
+    await waitFor(() => expect(server.state.pushTokens.length).toBe(2));
+
+    const kinds = server.state.pushTokens.map((t) => t.kind).sort();
+    expect(kinds).toEqual(['expo', 'fcm']);
+
+    const deviceIds = new Set(server.state.pushTokens.map((t) => t.deviceId));
+    expect(deviceIds.size).toBe(1);
+    expect([...deviceIds][0]).toBeTruthy();
+  });
+
+  it('wylogowanie wyrejestrowuje urządzenie, zanim token przestanie działać', async () => {
+    const server = await loggedIn();
+    await waitFor(() => expect(server.state.pushTokens.length).toBe(2));
+
+    // Alert.alert nie renderuje w testach przycisków — podglądamy wywołanie
+    // i uruchamiamy potwierdzenie tak, jak zrobiłby to użytkownik.
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+
+    fireEvent.press(screen.getByText('Więcej'));
+    fireEvent.press(await screen.findByText('Wyloguj'));
+
+    const confirm = alertSpy.mock.calls.at(-1)[2].find((button) => button.text === 'Wyloguj');
+    await confirm.onPress();
+    alertSpy.mockRestore();
+
+    await waitFor(() => expect(server.state.calls).toContain('POST /push/unregister'));
+    expect(server.state.pushTokens).toHaveLength(0);
   });
 });

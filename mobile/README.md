@@ -51,13 +51,15 @@ Zeskanuj kod QR aplikacją **Expo Go** na telefonie. Backend musi być osiągaln
 z telefonu — w sieci lokalnej podaj w aplikacji adres komputera, np.
 `http://192.168.1.10:4000`, i uruchom backend z `HOST=0.0.0.0`.
 
-> W Expo Go powiadomienia push nie działają w pełni (od SDK 53 wymagają
-> własnego buildu). Cała reszta aplikacji działa normalnie.
+> W Expo Go powiadomienia push nie działają (od SDK 53 wymagają własnego
+> buildu — Expo Go nie ma dostępu do konfiguracji Firebase tej aplikacji).
+> Cała reszta działa normalnie. Żeby przetestować powiadomienia, zbuduj plik
+> APK profilem `preview` (niżej).
 
 ### Testy i lint
 
 ```bash
-npm test     # 24 testy: klient API + renderowanie ekranów na atrapie backendu
+npm test     # 26 testów: klient API + renderowanie ekranów na atrapie backendu
 npm run lint
 ```
 
@@ -90,23 +92,87 @@ cd android && ./gradlew assembleRelease
 # plik: android/app/build/outputs/apk/release/app-release.apk
 ```
 
-## Powiadomienia push — co jest potrzebne
+## Powiadomienia push (Firebase)
 
-Backend wysyła powiadomienia przez usługę Expo (`exp.host`) — endpointy
-`POST /api/push/register` i `/api/push/unregister` są już po stronie serwera,
-a aplikacja rejestruje urządzenie po zalogowaniu i wyrejestrowuje przy
-wylogowaniu (inaczej powiadomienia trafiałyby na telefon poprzedniej osoby).
+Aplikacja jest podpięta do projektu Firebase **`gezet-mrkt-app`**, pakiet
+**`com.gezetmrkt.app`**. Plik `google-services.json` leży w repozytorium —
+bez niego biblioteka FCM nie wie, z jakim projektem się rejestrować.
 
-Żeby push działał w zbudowanej aplikacji, trzeba jednorazowo:
+> Ten plik nie jest sekretem: trafia do każdego pliku APK, a klucz w nim zawarty
+> jest ograniczony do pakietu aplikacji. Sekretem jest **klucz konta usługi**
+> (sekcja niżej) — tego nigdy nie wolno wrzucać do repozytorium.
 
-1. założyć projekt Firebase i pobrać `google-services.json`,
-2. wgrać dane FCM do EAS: `eas credentials` → Android → *FCM V1 service account key*,
-3. zbudować aplikację przez EAS.
+### Jak to działa
 
-Bez tego aplikacja działa normalnie — powiadomienia widać w zakładce
-**Powiadomienia**, po prostu telefon nie zadzwoni przy zamkniętej aplikacji.
+Telefon po zalogowaniu zgłasza serwerowi **dwa tokeny** opisane tym samym
+identyfikatorem urządzenia:
 
-Wyłączenie wysyłki po stronie serwera: `PUSH_ENABLED=false` w `server/.env`.
+| Token | Do czego |
+|---|---|
+| natywny FCM | droga główna — serwer wysyła prosto do Google |
+| Expo | droga zapasowa, gdy serwer nie ma klucza Firebase |
+
+Serwer wybiera **jedną** z nich na urządzenie, więc telefon nigdy nie dostaje
+dwóch kopii tego samego powiadomienia. Wylogowanie kasuje oba tokeny — inaczej
+powiadomienia trafiałyby na telefon osoby, która się już wylogowała.
+
+### Włączenie drogi przez Firebase (na serwerze)
+
+1. Konsola Firebase → **Ustawienia projektu → Konta usługi → Wygeneruj nowy
+   klucz prywatny**. Pobierzesz plik JSON.
+2. Wgraj go na VPS poza katalogiem aplikacji i ogranicz uprawnienia:
+
+   ```bash
+   sudo mkdir -p /etc/gezet
+   sudo install -o gezet -g gezet -m 600 ~/klucz-firebase.json /etc/gezet/fcm.json
+   ```
+
+3. W `server/.env` dopisz ścieżkę i zrestartuj usługę:
+
+   ```bash
+   echo 'FCM_SERVICE_ACCOUNT=/etc/gezet/fcm.json' | sudo tee -a /var/www/gezet-marketing/server/.env
+   sudo systemctl restart gezet-marketing
+   ```
+
+4. Sprawdź, którą drogą idą powiadomienia:
+
+   ```bash
+   curl -s https://marketing.twoja-firma.pl/api/health
+   # {"ok":true,...,"push":"Firebase Cloud Messaging (projekt gezet-mrkt-app)"}
+   ```
+
+   Jeśli widzisz `"push":"przekaźnik Expo"`, klucz nie został wczytany —
+   przyczynę wypisze `journalctl -u gezet-marketing -n 30`.
+
+Bez tego kroku aplikacja działa normalnie, tylko powiadomienia idą przez
+darmowy przekaźnik Expo (ich treść przechodzi wtedy przez serwery firmy
+trzeciej). Wyłączenie wysyłki w ogóle: `PUSH_ENABLED=false`.
+
+### Jak wyglądają na telefonie
+
+- baner na wierzchu ekranu razem z dźwiękiem i wibracją (kanał
+  „Zadania i zgłoszenia" o wysokiej ważności),
+- widoczne na ekranie blokady,
+- wysoki priorytet — telefon budzi się także w trybie oszczędzania energii,
+- dotknięcie powiadomienia otwiera **konkretne zadanie**, również gdy aplikacja
+  była zamknięta,
+- liczba nieprzeczytanych jako plakietka na ikonie (o ile launcher to obsługuje).
+
+Tytuł mówi, czego rzecz dotyczy („Nowe zadanie", „Zadanie od: Bogdan",
+„Nowe zgłoszenie"), a treść go nie powtarza — na ekranie blokady widać wtedy
+konkret, a nie samą nazwę aplikacji.
+
+### Jeśli powiadomienia nie przychodzą
+
+1. **Ustawienia → Powiadomienia** aplikacji: czy kanał „Zadania i zgłoszenia"
+   nie został wyciszony. Android zapamiętuje wybór użytkownika i późniejsza
+   zmiana w kodzie go nie nadpisze.
+2. **Oszczędzanie baterii** — nakładki Xiaomi, Samsunga, Huawei i OnePlusa
+   potrafią wstrzymywać powiadomienia uśpionych aplikacji. Ustaw dla aplikacji
+   „bez ograniczeń".
+3. W aplikacji: **Więcej → Ustawienia → Zarejestruj to urządzenie ponownie** —
+   pokaże, czy urządzenie ma token Firebase, czy tylko Expo.
+4. Na emulatorze bez usług Google powiadomienia push nie działają w ogóle.
 
 ## Struktura
 
@@ -115,9 +181,10 @@ mobile/
 ├── App.js                    providery + granica błędu
 ├── app.json                  konfiguracja Expo (nazwa, ikony, wtyczki)
 ├── eas.json                  profile budowania
+├── google-services.json      konfiguracja Firebase (projekt gezet-mrkt-app)
 ├── src/
 │   ├── api.js                klient API (adres serwera, token, błędy)
-│   ├── push.js               rejestracja urządzenia do powiadomień
+│   ├── push.js               rejestracja urządzenia (token FCM + Expo)
 │   ├── storage.js            token w SecureStore (Android Keystore)
 │   ├── theme.js              paleta wspólna z aplikacją webową
 │   ├── context/              sesja i dane (odpytywanie, stan offline)
@@ -144,3 +211,9 @@ mobile/
 - **Ikony importowane z konkretnej rodziny** (`@expo/vector-icons/Ionicons`),
   bo import z indeksu paczki dołączał do aplikacji ponad 3 MB niepotrzebnych
   plików czcionek.
+- **Dwa tokeny push pod jednym identyfikatorem urządzenia.** Gdyby serwer nie
+  umiał ich sparować, telefon zgłaszający oba dostawałby każde powiadomienie
+  dwa razy.
+- **Kanał powiadomień tworzony przy starcie aplikacji**, a nie dopiero przy
+  rejestracji urządzenia — powiadomienie, które przyjdzie wcześniej, i tak musi
+  mieć kanał z dźwiękiem, inaczej Android pokaże je po cichu.

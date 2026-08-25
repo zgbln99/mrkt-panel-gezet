@@ -290,11 +290,31 @@ npm install -g eas-cli && eas login && eas init
 eas build --platform android --profile preview
 ```
 
-Szczegóły (adres serwera, konfiguracja pushy, build lokalny) —
+Szczegóły (adres serwera, konfiguracja powiadomień, build lokalny) —
 [`mobile/README.md`](mobile/README.md).
 
-Powiadomienia push wymagają po stronie serwera jedynie `PUSH_ENABLED=true`
-(domyślnie włączone); klucze FCM konfiguruje się raz w EAS.
+### Powiadomienia push przez Firebase
+
+Aplikacja jest podpięta do projektu Firebase `gezet-mrkt-app` (pakiet
+`com.gezetmrkt.app`). Powiadomienia przychodzą z **dźwiękiem i banerem na
+ekranie**, są widoczne na ekranie blokady, budzą telefon w trybie oszczędzania
+energii, a dotknięcie otwiera konkretne zadanie.
+
+Żeby serwer wysyłał je bezpośrednio do Google (a nie przez darmowy przekaźnik
+Expo, przez który przechodziłaby ich treść), wgraj klucz konta usługi Firebase:
+
+```bash
+sudo mkdir -p /etc/gezet
+sudo install -o gezet -g gezet -m 600 ~/klucz-firebase.json /etc/gezet/fcm.json
+echo 'FCM_SERVICE_ACCOUNT=/etc/gezet/fcm.json' | sudo tee -a /var/www/gezet-marketing/server/.env
+sudo systemctl restart gezet-marketing
+
+curl -s https://marketing.twoja-firma.pl/api/health   # pole "push" pokaże wybraną drogę
+```
+
+Klucz pobierzesz z konsoli Firebase: **Ustawienia projektu → Konta usługi →
+Wygeneruj nowy klucz prywatny**. Bez niego powiadomienia nadal działają — idą
+tylko przekaźnikiem Expo. Wyłączenie wysyłki: `PUSH_ENABLED=false`.
 
 ## 5. Bezpieczeństwo
 
@@ -336,6 +356,16 @@ poniżej to, co aplikacja robi, żeby jedno nie stało się drogą do drugiego.
 - Czcionki hostowane lokalnie — przeglądarki użytkowników nie łączą się z żadną
   domeną zewnętrzną, więc nie wysyłają danych do Google (istotne pod RODO).
 
+**Powiadomienia push**
+- Klucz konta usługi Firebase trzyma się poza katalogiem aplikacji, z prawami
+  `600` dla konta usługi — w przeciwieństwie do `google-services.json`, który
+  trafia do każdego pliku APK i sekretem nie jest.
+- Z kluczem Firebase treść powiadomień (nazwiska, tytuły zadań) idzie wprost do
+  Google. Bez niego przechodzi przez przekaźnik Expo — warto to wiedzieć, decydując
+  o konfiguracji.
+- Wylogowanie na telefonie kasuje tokeny urządzenia, zanim token sesji przestanie
+  działać; inaczej powiadomienia trafiałyby do poprzedniego użytkownika telefonu.
+
 **Co warto dołożyć przy wrażliwszych danych**
 - Kopie zapasowe poza serwerem i szyfrowanie ich w spoczynku.
 - Uwierzytelnianie dwuskładnikowe (aplikacja go nie ma).
@@ -364,7 +394,7 @@ poniżej to, co aplikacja robi, żeby jedno nie stało się drogą do drugiego.
 | POST | `/api/auth/change-password` | zalogowany | zmiana własnego hasła |
 | GET | `/api/users` | admin | lista kont zespołu |
 | POST | `/api/users/:id/reset-password` | admin | reset hasła (opcjonalnie losowego) |
-| POST | `/api/push/register` | zalogowany | rejestracja urządzenia mobilnego do powiadomień |
+| POST | `/api/push/register` | zalogowany | rejestracja tokenu urządzenia (FCM albo Expo) |
 | POST | `/api/push/unregister` | zalogowany | wyrejestrowanie urządzenia (wylogowanie na telefonie) |
 
 ---

@@ -197,4 +197,13 @@ cat <<EOF
    2. Zaloguj się hasłem startowym — aplikacja od razu poprosi o zmianę.
    3. Przekaż pozostałym osobom ich hasła startowe.
 
+ Powiadomienia na telefony (aplikacja mobilna):
+   Wgraj klucz konta usługi Firebase i dopisz go do konfiguracji:
+     sudo mkdir -p /etc/gezet
+     sudo install -o $APP_USER -g $APP_USER -m 600 klucz.json /etc/gezet/fcm.json
+     echo 'FCM_SERVICE_ACCOUNT=/etc/gezet/fcm.json' | sudo tee -a $ENV_FILE
+     sudo systemctl restart gezet-marketing
+   Bez tego powiadomienia idą przekaźnikiem Expo. Sprawdzenie:
+     curl -s https://$DOMAIN/api/health
+
 EOF

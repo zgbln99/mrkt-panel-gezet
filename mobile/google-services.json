@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "391736290890",
+    "project_id": "gezet-mrkt-app",
+    "storage_bucket": "gezet-mrkt-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:391736290890:android:79b4a39c65a80b9f5840b3",
+        "android_client_info": {
+          "package_name": "com.gezetmrkt.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDtv-x79C3_PgQbWay8sL--7tybuzxiWrs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -10,6 +10,7 @@ export function createFakeServer(options = {}) {
     password: 'Startowe-Haslo-123',
     token: 'token-1',
     calls: [],
+    pushTokens: [],
     tasks: [
       {
         id: 'task-1',
@@ -157,8 +158,15 @@ export function createFakeServer(options = {}) {
       task.transferLog = [...task.transferLog, { from: user().id, to: body.toUserId, note: body.note, at: new Date().toISOString() }];
       return json(200, { task });
     }
-    if (path === '/push/register') return json(200, { ok: true });
-    if (path === '/push/unregister') return json(200, { ok: true });
+    if (path === '/push/register') {
+      if (!body || !body.token || !body.kind) return json(400, { error: 'Nieprawidłowy token urządzenia.' });
+      state.pushTokens.push({ token: body.token, kind: body.kind, deviceId: body.deviceId });
+      return json(200, { ok: true, transport: 'przekaźnik Expo' });
+    }
+    if (path === '/push/unregister') {
+      state.pushTokens = state.pushTokens.filter((t) => t.deviceId !== (body && body.deviceId));
+      return json(200, { ok: true });
+    }
     if (path === '/users') return json(200, { users: [] });
 
     return json(404, { error: 'Nie znaleziono takiego zasobu API.' });

@@ -131,11 +131,17 @@ router.post('/', (req, res) => {
         notified.add(assignee);
         const own = tasks.filter((t) => t.assignees.includes(assignee));
         const suffix = payload.brand ? `, ${brandModelLabel}` : '';
-        const text =
-          own.length === 1
+        const single = own.length === 1;
+        store.pushNotification({
+          userId: assignee,
+          text: single
             ? `Nowe zadanie: „${own[0].title}” (zgłoszenie: ${name}${suffix})`
-            : `${own.length} nowych zadań ze zgłoszenia: ${name}${suffix}`;
-        store.pushNotification({ userId: assignee, text, requestId: id });
+            : `${own.length} nowych zadań ze zgłoszenia: ${name}${suffix}`,
+          title: single ? 'Nowe zadanie' : `${own.length} nowych zadań`,
+          pushBody: single ? `${own[0].title} — od ${name}${suffix}` : `Zgłoszenie od ${name}${suffix}`,
+          requestId: id,
+          taskId: single ? own[0].id : null,
+        });
       }
     }
 
@@ -146,6 +152,8 @@ router.post('/', (req, res) => {
       store.pushNotification({
         userId: adminId,
         text: `Nowe zgłoszenie od ${name}: ${brandModelLabel} — utworzono ${tasks.length} zadań`,
+        title: 'Nowe zgłoszenie',
+        pushBody: `${name}: ${brandModelLabel} — ${tasks.length} zadań`,
         requestId: id,
       });
     }

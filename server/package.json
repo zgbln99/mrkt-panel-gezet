@@ -14,7 +14,8 @@
     "set-password": "node scripts/set-password.js",
     "backup": "node scripts/backup.js",
     "check": "node --check src/index.js && node scripts/smoke-test.js",
-    "test": "node scripts/smoke-test.js"
+    "test": "node scripts/smoke-test.js && node scripts/fcm-test.js",
+    "test:fcm": "node scripts/fcm-test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

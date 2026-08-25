@@ -98,7 +98,14 @@ const insertNotification = db.prepare(
   'INSERT INTO notifications (id, user_id, text, read, at, request_id, task_id) VALUES (?, ?, ?, 0, ?, ?, ?)'
 );
 
-function pushNotification({ userId, text, requestId, taskId, title }) {
+/**
+ * Zapisuje powiadomienie w aplikacji i — w tle — wysyła je na telefon.
+ *
+ * `title` i `pushBody` dotyczą wyłącznie powiadomienia systemowego: na ekranie
+ * blokady tytuł jest pierwszą linią, więc musi mówić, czego rzecz dotyczy,
+ * a treść nie powinna go powtarzać. W liście w aplikacji widać `text`.
+ */
+function pushNotification({ userId, text, requestId, taskId, title, pushBody }) {
   insertNotification.run(newId(), userId, text, new Date().toISOString(), requestId || null, taskId || null);
 
   // setImmediate, a nie await: ta funkcja bywa wywoływana wewnątrz synchronicznej
@@ -109,7 +116,7 @@ function pushNotification({ userId, text, requestId, taskId, title }) {
       require('./push')
         .sendToUser(userId, {
           title: title || 'Zgłoszenia Marketing',
-          body: text,
+          body: pushBody || text,
           data: { requestId: requestId || null, taskId: taskId || null },
         })
         .catch((err) => console.error('[push]', err.message));

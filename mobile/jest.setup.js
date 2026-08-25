@@ -41,8 +41,12 @@ jest.mock('expo-notifications', () => ({
   getPermissionsAsync: jest.fn(async () => ({ status: 'granted' })),
   requestPermissionsAsync: jest.fn(async () => ({ status: 'granted' })),
   getExpoPushTokenAsync: jest.fn(async () => ({ data: 'ExpoPushToken[test]' })),
+  getDevicePushTokenAsync: jest.fn(async () => ({ type: 'android', data: 'fcm-token-testowy-abcdefghijkl' })),
+  getLastNotificationResponseAsync: jest.fn(async () => null),
   addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  setBadgeCountAsync: jest.fn(async () => true),
   AndroidImportance: { HIGH: 4 },
+  AndroidNotificationVisibility: { PUBLIC: 1 },
 }));
 
 jest.mock('expo-device', () => ({ isDevice: true }));
