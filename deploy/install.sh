@@ -31,6 +31,13 @@ die()   { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "Uruchom przez sudo: sudo bash deploy/install.sh twoja-domena.pl"
 [[ -n "$DOMAIN" ]] || die "Podaj domenę: sudo bash deploy/install.sh marketing.twoja-firma.pl"
 
+# Domena z przykładu w dokumentacji nie należy do nikogo z nas — wpisana
+# dosłownie kończy się nieudaną walidacją certyfikatu i zużyciem limitu prób
+# w Let's Encrypt.
+if [[ "$DOMAIN" =~ (twoja-firma\.pl|TWOJA-DOMENA|przyklad\.pl|example\.com)$ ]]; then
+    die "\"$DOMAIN\" to domena z przykładu w dokumentacji. Podaj własną, np. panel.gezet.pl"
+fi
+
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [[ -d "$SOURCE_DIR/server" && -d "$SOURCE_DIR/client" ]] || die "Nie znaleziono katalogów server/ i client/ obok skryptu."
 
@@ -169,6 +176,33 @@ curl -fsS http://127.0.0.1:4000/api/health >/dev/null 2>&1 \
     || die "API nie odpowiada. Sprawdź: journalctl -u gezet-marketing -n 50"
 
 # ── 11. HTTPS ──────────────────────────────────────────────────────────
+# Let's Encrypt liczy nieudane walidacje i po kilku próbach blokuje domenę na
+# godzinę. Zanim uruchomimy certbota, sprawdzamy więc sami, czy domena w ogóle
+# wskazuje na ten serwer — inaczej pierwsza literówka kosztuje godzinę czekania.
+domain_points_here() {
+    local resolved local_ips
+    resolved="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u)"
+    [[ -z "$resolved" ]] && return 2   # brak rekordu A — nie ma czego porównywać
+    local_ips="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$')"
+    while read -r ip; do
+        [[ -z "$ip" ]] && continue
+        grep -qx "$ip" <<< "$local_ips" && return 0
+    done <<< "$resolved"
+    return 1
+}
+
+domain_points_here
+DNS_CHECK=$?
+
+if [[ $DNS_CHECK -eq 1 ]]; then
+    warn "Domena $DOMAIN wskazuje na inny adres niż ten serwer — pomijam certyfikat."
+    warn "Popraw rekord A w DNS (wskaż na: $(hostname -I | awk '{print $1}')), odczekaj na propagację i uruchom:"
+    warn "  sudo certbot --nginx -d $DOMAIN"
+    warn "Jeśli używasz Cloudflare, na czas wystawiania certyfikatu wyłącz proxy (szara chmurka)."
+elif [[ $DNS_CHECK -eq 2 ]]; then
+    warn "Domena $DOMAIN nie ma jeszcze rekordu A — pomijam certyfikat."
+    warn "Po dodaniu rekordu uruchom: sudo certbot --nginx -d $DOMAIN"
+else
 info "Konfiguruję certyfikat HTTPS (Let's Encrypt)"
 if apt-get install -y -qq certbot python3-certbot-nginx; then
     if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect; then
@@ -178,6 +212,7 @@ if apt-get install -y -qq certbot python3-certbot-nginx; then
         warn "Najczęstsza przyczyna: domena $DOMAIN nie wskazuje jeszcze na ten serwer."
         warn "Po poprawieniu DNS uruchom: sudo certbot --nginx -d $DOMAIN"
     fi
+fi
 fi
 
 cat <<EOF

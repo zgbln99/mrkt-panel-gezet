@@ -109,13 +109,21 @@ dostęp `sudo` i domenę wskazującą rekordem A na adres IP serwera.
 
 ### Droga A — jeden skrypt (zalecana)
 
+**Zanim zaczniesz:** dodaj w DNS rekord **A** dla swojej domeny wskazujący na
+adres IP serwera i odczekaj na propagację. Bez tego Let's Encrypt nie wystawi
+certyfikatu — skrypt sprawdza to sam i pominie ten krok z czytelnym
+komunikatem, zamiast zużywać limit prób.
+
 ```bash
-# na serwerze
+# na serwerze — WSTAW WŁASNĄ DOMENĘ zamiast panel.twojafirma.pl
 sudo apt update && sudo apt install -y git
 sudo git clone <adres-repozytorium> /var/www/gezet-marketing
 cd /var/www/gezet-marketing
-sudo bash deploy/install.sh marketing.twoja-firma.pl
+sudo bash deploy/install.sh panel.twojafirma.pl
 ```
+
+Jeśli domena stoi za Cloudflare, na czas wystawiania certyfikatu wyłącz proxy
+(szara chmurka) — inaczej walidacja trafia do Cloudflare, a nie do serwera.
 
 Skrypt instaluje Node.js, nginx, certbot i ufw, zakłada systemowe konto `gezet`,
 buduje frontend, generuje `.env` z losowym `JWT_SECRET`, zakłada konta zespołu
@@ -147,11 +155,11 @@ na hoście:
 
 ```bash
 sudo cp deploy/nginx.conf /etc/nginx/sites-available/gezet-marketing
-sudo sed -i 's/TWOJA-DOMENA.PL/marketing.twoja-firma.pl/g' /etc/nginx/sites-available/gezet-marketing
+sudo sed -i 's/TWOJA-DOMENA.PL/panel.twojafirma.pl/g' /etc/nginx/sites-available/gezet-marketing
 sudo ln -sf /etc/nginx/sites-available/gezet-marketing /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d marketing.twoja-firma.pl
+sudo certbot --nginx -d panel.twojafirma.pl
 
 sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable
 ```
@@ -353,6 +361,10 @@ poniżej to, co aplikacja robi, żeby jedno nie stało się drogą do drugiego.
 - CORS domyślnie wyłączony — przy wdrożeniu za nginx-em frontend i API dzielą
   domenę, więc żądania cross-origin nie są w ogóle potrzebne.
 - Backend nasłuchuje na `127.0.0.1`; port 4000 nie jest wystawiony do internetu.
+- nginx odrzuca żądania z nazwą hosta inną niż skonfigurowana domena (wejścia po
+  samym adresie IP, skanery, cudze domeny wskazujące na serwer). Bez tego panel
+  byłby dostępny po adresie IP przez zwykłe HTTP — czyli z hasłem lecącym
+  otwartym tekstem mimo poprawnego certyfikatu dla domeny.
 - Czcionki hostowane lokalnie — przeglądarki użytkowników nie łączą się z żadną
   domeną zewnętrzną, więc nie wysyłają danych do Google (istotne pod RODO).
 
