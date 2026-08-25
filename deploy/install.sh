@@ -60,7 +60,12 @@ detect_shared_hosting_port() {
         | grep -oE '[0-9]+$' | sort -un | tail -1
 }
 
-if [[ "$MODE" == "domain" ]]; then
+if [[ "$MODE" == "domain" && "${IPV6_ONLY:-0}" == "1" ]]; then
+    # Adres bez numeru portu na hostingu bez własnego IPv4 jest możliwy
+    # wyłącznie po IPv6 — świadomy wybór, bo sieci bez IPv6 nie zobaczą wtedy
+    # aplikacji w ogóle.
+    MODE="ipv6"
+elif [[ "$MODE" == "domain" ]]; then
     if [[ -z "${HTTPS_PORT:-}" ]]; then
         HTTPS_PORT="$(detect_shared_hosting_port || true)"
         [[ -n "$HTTPS_PORT" ]] && echo "Wykryto przydzielony port TCP: $HTTPS_PORT (nadpiszesz zmienną HTTPS_PORT)"
@@ -207,7 +212,31 @@ mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
 SERVER_IPV4="$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{sub(/\/.*/,"",$2); print $2; exit}')"
 SERVER_IPV6="$(ip -6 addr show scope global 2>/dev/null | awk '/inet6 /{sub(/\/.*/,"",$2); print $2; exit}')"
 
-if [[ "$MODE" == "port" ]]; then
+if [[ "$MODE" == "ipv6" ]]; then
+    info "Konfiguruję nginx dla $DOMAIN (wyłącznie IPv6)"
+    cat > "$NGINX_SITE" <<NGINXCONF
+server {
+    listen [::]:80;
+    server_name $DOMAIN;
+    server_tokens off;
+    client_max_body_size 512k;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root $ACME_ROOT;
+        default_type "text/plain";
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              \$host;
+        proxy_set_header X-Real-IP         \$remote_addr;
+        proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINXCONF
+elif [[ "$MODE" == "port" ]]; then
     info "Konfiguruję nginx dla $DOMAIN na porcie $HTTPS_PORT"
     # Wariant startowy: bez TLS, bo certyfikatu jeszcze nie ma, a nginx nie
     # wstałby wskazując na nieistniejące pliki. Docelowa konfiguracja wchodzi
@@ -316,8 +345,19 @@ curl -fsS http://127.0.0.1:4000/api/health >/dev/null 2>&1 \
 
 # ── 11. HTTPS ──────────────────────────────────────────────────────────
 
-if [[ "$MODE" == "port" ]]; then
+if [[ "$MODE" == "ipv6" || "$MODE" == "port" ]]; then
     info "Konfiguruję certyfikat HTTPS dla $DOMAIN"
+
+    if [[ "$MODE" == "ipv6" ]]; then
+        # Rekord A wysyłałby osoby bez IPv6 na współdzielony adres dostawcy,
+        # gdzie dostaną błąd certyfikatu zamiast czytelnej informacji.
+        RESOLVED_V4="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u)"
+        if [[ -n "$RESOLVED_V4" ]]; then
+            warn "Domena $DOMAIN ma rekord A ($(tr '\n' ' ' <<< "$RESOLVED_V4"))."
+            warn "W trybie wyłącznie IPv6 usuń go — inaczej osoby bez IPv6 zobaczą"
+            warn "błąd certyfikatu cudzego serwera zamiast informacji o braku dostępu."
+        fi
+    fi
 
     # Na współdzielonym IPv4 port 80 nie należy do nas, więc Let's Encrypt musi
     # dojść po IPv6 — a to wymaga rekordu AAAA wskazującego na ten serwer.
@@ -326,19 +366,19 @@ if [[ "$MODE" == "port" ]]; then
     if [[ -z "$SERVER_IPV6" ]]; then
         warn "Ten serwer nie ma publicznego adresu IPv6 — nie ma jak wydać certyfikatu."
         warn "Na współdzielonym adresie IPv4 port 80 należy do dostawcy hostingu."
-        BASE_URL="http://$DOMAIN:$HTTPS_PORT"
+        [[ "$MODE" == "ipv6" ]] && BASE_URL="http://$DOMAIN" || BASE_URL="http://$DOMAIN:$HTTPS_PORT"
     elif [[ -z "$RESOLVED_V6" ]]; then
         warn "Domena $DOMAIN nie ma rekordu AAAA — pomijam certyfikat."
         warn "Załóż rekord:  AAAA  $DOMAIN  →  $SERVER_IPV6"
         warn "Bez niego Let's Encrypt nie ma jak potwierdzić, że serwer jest Wasz:"
         warn "na współdzielonym IPv4 port 80 obsługuje dostawca hostingu, nie Wy."
         warn "Po propagacji uruchom skrypt ponownie."
-        BASE_URL="http://$DOMAIN:$HTTPS_PORT"
+        [[ "$MODE" == "ipv6" ]] && BASE_URL="http://$DOMAIN" || BASE_URL="http://$DOMAIN:$HTTPS_PORT"
     elif ! grep -qx "$SERVER_IPV6" <<< "$RESOLVED_V6"; then
         warn "Rekord AAAA domeny $DOMAIN wskazuje na inny adres niż ten serwer."
         warn "  w DNS:      $(tr '\n' ' ' <<< "$RESOLVED_V6")"
         warn "  ten serwer: $SERVER_IPV6"
-        BASE_URL="http://$DOMAIN:$HTTPS_PORT"
+        [[ "$MODE" == "ipv6" ]] && BASE_URL="http://$DOMAIN" || BASE_URL="http://$DOMAIN:$HTTPS_PORT"
     else
         info "Wystawiam certyfikat (walidacja po IPv6)"
         if apt-get install -y -qq certbot >/dev/null &&
@@ -347,8 +387,12 @@ if [[ "$MODE" == "port" ]]; then
                --keep-until-expiring; then
 
             info "Włączam HTTPS w nginx"
-            sed -e "s/DOMENA_APLIKACJI/$DOMAIN/g" -e "s/PORT_HTTPS/$HTTPS_PORT/g" \
-                "$APP_DIR/deploy/nginx-mikrus.conf" > "$NGINX_SITE"
+            if [[ "$MODE" == "ipv6" ]]; then
+                sed "s/DOMENA_APLIKACJI/$DOMAIN/g" "$APP_DIR/deploy/nginx-ipv6.conf" > "$NGINX_SITE"
+            else
+                sed -e "s/DOMENA_APLIKACJI/$DOMAIN/g" -e "s/PORT_HTTPS/$HTTPS_PORT/g" \
+                    "$APP_DIR/deploy/nginx-mikrus.conf" > "$NGINX_SITE"
+            fi
             nginx -t && systemctl reload nginx
             # Odnawianie obsługuje timer certbota z pakietu; dokładamy tylko
             # przeładowanie nginx po odnowieniu.
@@ -359,7 +403,7 @@ if [[ "$MODE" == "port" ]]; then
         else
             warn "Nie udało się wystawić certyfikatu — aplikacja działa po HTTP."
             warn "Sprawdź, czy port 80 po IPv6 jest osiągalny z internetu."
-            BASE_URL="http://$DOMAIN:$HTTPS_PORT"
+            [[ "$MODE" == "ipv6" ]] && BASE_URL="http://$DOMAIN" || BASE_URL="http://$DOMAIN:$HTTPS_PORT"
         fi
     fi
 

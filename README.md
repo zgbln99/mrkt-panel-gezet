@@ -190,12 +190,34 @@ potwierdzi, że serwer należy do Ciebie. Na współdzielonym IPv4 port 80 obsł
 dostawca hostingu, więc walidacja po IPv4 nigdy nie trafi do Twojej aplikacji.
 
 **Adres dla zespołu:** `https://mrkt.gezet.pl:30145` — działa w każdej sieci.
-Wersja bez portu (`https://mrkt.gezet.pl`) zadziała wyłącznie tam, gdzie jest
-IPv6, więc lepiej rozdać zespołowi tę pierwszą.
+Numer portu bywa blokowany przez restrykcyjne firewalle firmowe, więc warto to
+sprawdzić z sieci, z której zespół faktycznie korzysta, zanim rozda się adres
+wszystkim.
 
-Numer portu w adresie bywa blokowany przez restrykcyjne firewalle firmowe —
-warto to sprawdzić z sieci, z której zespół faktycznie korzysta, zanim rozda się
-adres wszystkim.
+#### Adres bez numeru portu — wariant wyłącznie IPv6
+
+Numer portu w adresie da się pominąć, ale tylko po IPv6 — na współdzielonym
+IPv4 port 443 należy do dostawcy hostingu i nic tego nie zmieni.
+
+```bash
+sudo IPV6_ONLY=1 bash deploy/install.sh mrkt.gezet.pl
+```
+
+W DNS zostaje wtedy **wyłącznie rekord AAAA**; rekord A trzeba usunąć. Osoby bez
+IPv6 dostaną wtedy czytelne „nie znaleziono serwera" zamiast błędu certyfikatu
+cudzej maszyny — skrypt ostrzeże, jeśli rekord A nadal istnieje.
+
+Cena jest jednak realna: **kto nie ma IPv6, nie wejdzie w ogóle** — dotyczy to
+także aplikacji mobilnej w sieci Wi-Fi bez IPv6. Zanim wybierzesz ten wariant,
+sprawdź na sprzęcie zespołu:
+
+```bash
+curl -6 https://ifconfig.me      # adres = IPv6 jest, błąd = nie ma
+```
+
+Polskie sieci komórkowe zwykle mają IPv6; biurowe łącza i sieci firmowe bywają
+wyłącznie na IPv4. Jeśli choć część zespołu jest bez IPv6, wariant z portem jest
+jedynym, który obsłuży wszystkich.
 
 ### Serwer za NAT-em (adres prywatny)
 
@@ -349,6 +371,7 @@ w katalogu `deploy/`:
 | `deploy/nginx.conf` | reverse proxy dla domeny — cache statyki, limit żądań |
 | `deploy/nginx-ip.conf` | wariant bez domeny: HTTPS pod samym adresem IPv4 |
 | `deploy/nginx-mikrus.conf` | hosting bez portów 80/443: HTTPS na przydzielonym porcie |
+| `deploy/nginx-ipv6.conf` | wariant wyłącznie IPv6: adres bez numeru portu |
 | `deploy/gezet-marketing.service` | usługa systemd (z ograniczeniami dostępu do systemu) |
 | `deploy/gezet-backup.service` + `.timer` | codzienna kopia zapasowa o 2:30 |
 | `deploy/gezet-certbot-renew.service` + `.timer` | odnawianie krótkiego certyfikatu dla adresu IP |

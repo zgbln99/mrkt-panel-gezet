@@ -94,10 +94,21 @@ if [[ $BEHIND_NAT -eq 1 ]]; then
         echo "    • certyfikat wydany przez walidację po IPv6 (tam port 80 jest Wasz)"
         echo "    • rekord AAAA jest OBOWIĄZKOWY, bez niego certyfikatu nie będzie"
         echo
-        echo "  Instalacja:"
-        echo "    sudo HTTPS_PORT=${SHARED_PORTS%% *} bash deploy/install.sh ${DOMAIN:-twoja.domena.pl}"
+        echo "  Masz dwie możliwości:"
         echo
-        echo "  Adres dla zespołu: https://${DOMAIN:-twoja.domena.pl}:${SHARED_PORTS%% *}"
+        echo "  A) Adres z portem — działa w KAŻDEJ sieci:"
+        echo "       sudo HTTPS_PORT=${SHARED_PORTS%% *} bash deploy/install.sh ${DOMAIN:-twoja.domena.pl}"
+        echo "       adres: https://${DOMAIN:-twoja.domena.pl}:${SHARED_PORTS%% *}"
+        echo
+        echo "  B) Adres bez portu — ale wyłącznie dla sieci z IPv6:"
+        echo "       sudo IPV6_ONLY=1 bash deploy/install.sh ${DOMAIN:-twoja.domena.pl}"
+        echo "       adres: https://${DOMAIN:-twoja.domena.pl}"
+        echo "       w DNS zostaw wtedy WYŁĄCZNIE rekord AAAA (rekord A usuń)"
+        echo
+        echo "  Zanim wybierzesz B, sprawdź na komputerze i telefonie zespołu,"
+        echo "  czy ich sieć ma w ogóle IPv6:"
+        echo "       curl -6 https://ifconfig.me      # adres = jest IPv6, błąd = nie ma"
+        echo "  Bez IPv6 wariant B jest dla takiej osoby całkowicie niedostępny."
         echo
     else
     echo
