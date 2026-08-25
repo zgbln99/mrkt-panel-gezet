@@ -1,0 +1,40 @@
+# Najprostsza droga na VPS: `docker compose up -d --build`.
+#
+# Kontener serwuje jednocześnie API i zbudowany frontend na porcie 4000,
+# wystawionym wyłącznie na pętlę zwrotną (127.0.0.1). Ruch z internetu
+# przechodzi przez nginx-a na hoście, który dokłada HTTPS
+# (patrz deploy/nginx.conf i deploy/install.sh).
+
+services:
+  app:
+    build: .
+    image: gezet-marketing:latest
+    container_name: gezet-marketing
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4000
+      DB_PATH: /data/gezet.db
+    ports:
+      # 127.0.0.1 z przodu jest istotne: bez tego Docker otworzyłby port 4000
+      # na wszystkich interfejsach, omijając ufw i wystawiając API bez HTTPS.
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - gezet-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  gezet-data:

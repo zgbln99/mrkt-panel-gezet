@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { api, getToken, setToken } from './api';
+import { api, getToken, setToken, setUnauthorizedHandler } from './api';
 import Header from './components/Header.jsx';
 import PublicForm from './components/PublicForm.jsx';
 import LoginModal from './components/LoginModal.jsx';
@@ -11,7 +11,7 @@ const POLL_MS = 15000;
 
 export default function App() {
   const [meta, setMeta] = useState(null);
-  const [metaError, setMetaError] = useState(false);
+  const [metaError, setMetaError] = useState('');
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [view, setView] = useState('form');
@@ -19,46 +19,104 @@ export default function App() {
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [requests, setRequests] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [offline, setOffline] = useState(false);
   const [toast, setToast] = useState('');
   const toastTimer = useRef(null);
 
-  const showToast = useCallback((msg) => {
-    setToast(msg);
+  const showToast = useCallback((message) => {
+    setToast(message);
     clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(''), 2400);
+    toastTimer.current = setTimeout(() => setToast(''), 2600);
   }, []);
 
-  // Metadane publiczne (zespół/kategorie/triggery/materiały)
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+
+  const logout = useCallback(
+    (message) => {
+      setToken(null);
+      setUser(null);
+      setView('form');
+      setRequests([]);
+      setNotifications([]);
+      setShowChangePassword(false);
+      if (message) showToast(message);
+    },
+    [showToast]
+  );
+
+  // Serwer odrzucił token (wygasł, hasło zmienione gdzie indziej, konto
+  // usunięte). Bez tego panel zostawał otwarty i po cichu przestawał się
+  // odświeżać — użytkownik pracował na nieaktualnych danych.
   useEffect(() => {
-    api.getMeta().then(setMeta).catch(() => setMetaError(true));
+    setUnauthorizedHandler((code) => {
+      const message =
+        code === 'token_revoked'
+          ? 'Hasło do Twojego konta zostało zmienione — zaloguj się ponownie.'
+          : 'Sesja wygasła — zaloguj się ponownie.';
+      logout(message);
+      setShowLogin(true);
+    });
+    return () => setUnauthorizedHandler(null);
+  }, [logout]);
+
+  useEffect(() => {
+    api
+      .getMeta()
+      .then(setMeta)
+      .catch((e) => setMetaError(e.message || 'Nie udało się połączyć z serwerem.'));
   }, []);
 
-  // Próba odtworzenia sesji z zapisanego tokenu
+  // Odtworzenie sesji z zapisanego tokenu przy wejściu na stronę.
   useEffect(() => {
-    const token = getToken();
-    if (!token) { setAuthChecked(true); return; }
-    api.me()
-      .then((res) => { setUser(res.user); setView('panel'); })
+    if (!getToken()) {
+      setAuthChecked(true);
+      return;
+    }
+    api
+      .me()
+      .then((res) => {
+        setUser(res.user);
+        setView('panel');
+        if (res.user.mustChangePassword) setShowChangePassword(true);
+      })
       .catch(() => setToken(null))
       .finally(() => setAuthChecked(true));
   }, []);
 
   const refreshData = useCallback(async () => {
-    if (!user) return;
+    if (!user || user.mustChangePassword) return;
     try {
       const [r, n] = await Promise.all([api.getRequests(), api.getNotifications()]);
       setRequests(r.requests);
       setNotifications(n.notifications);
+      setOffline(false);
     } catch (e) {
-      // cichy błąd odświeżania w tle — nie przerywamy pracy użytkownika
+      // Chwilowy brak sieci nie może przerywać pracy — pokazujemy dyskretny
+      // znacznik i próbujemy dalej przy kolejnym cyklu.
+      if (e.status === 0) setOffline(true);
     }
   }, [user]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || user.mustChangePassword) return undefined;
+
     refreshData();
-    const id = setInterval(refreshData, POLL_MS);
-    return () => clearInterval(id);
+    let timer = setInterval(refreshData, POLL_MS);
+
+    // Odpytywanie w tle na ukrytej karcie tylko obciąża serwer i baterię.
+    const onVisibility = () => {
+      clearInterval(timer);
+      if (document.visibilityState === 'visible') {
+        refreshData();
+        timer = setInterval(refreshData, POLL_MS);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [user, refreshData]);
 
   const handleLogin = async (username, password) => {
@@ -67,58 +125,64 @@ export default function App() {
     setUser(res.user);
     setShowLogin(false);
     setView('panel');
+    if (res.user.mustChangePassword) setShowChangePassword(true);
   };
 
-  const handleLogout = () => {
-    setToken(null);
-    setUser(null);
-    setView('form');
-    setRequests([]);
-    setNotifications([]);
+  const handlePasswordChanged = (res) => {
+    setToken(res.token);
+    setUser(res.user);
+    setShowChangePassword(false);
   };
 
   const handleSubmitRequest = async (payload) => {
     const res = await api.submitRequest(payload);
-    if (user) refreshData();
+    if (user && !user.mustChangePassword) refreshData();
     return res.tasks;
   };
 
-  const handleUpdateStatus = async (taskId, status) => {
-    await api.updateTaskStatus(taskId, status);
+  const withRefresh = (fn) => async (...args) => {
+    const result = await fn(...args);
     await refreshData();
+    return result;
   };
-  const handleUpdateAssignees = async (taskId, assignees) => {
-    await api.updateTaskAssignees(taskId, assignees);
-    await refreshData();
-  };
+
+  const handleUpdateStatus = withRefresh(api.updateTaskStatus);
+  const handleUpdateAssignees = withRefresh(api.updateTaskAssignees);
+  const handleMarkSeen = withRefresh(api.markRequestSeen);
+  const handleDeleteRequest = withRefresh(api.deleteRequest);
+  const handleMarkAllRead = withRefresh(api.markAllNotificationsRead);
+  const handleMarkOneRead = withRefresh(api.markNotificationRead);
+
   const handleTransfer = async (taskId, toUserId, note) => {
     await api.transferTask(taskId, toUserId, note);
     await refreshData();
     showToast('Zadanie przekazane');
   };
-  const handleMarkSeen = async (reqId) => {
-    await api.markRequestSeen(reqId);
-    await refreshData();
-  };
-  const handleMarkAllRead = async () => {
-    await api.markAllNotificationsRead();
-    await refreshData();
-  };
-  const handleMarkOneRead = async (id) => {
-    await api.markNotificationRead(id);
-    await refreshData();
-  };
-
-  const unread = notifications.filter((n) => !n.read).length;
 
   if (!authChecked || !meta) {
     return (
-      <div className="gz-root">
-        <style>{'.gz-root{min-height:200px;display:flex;align-items:center;justify-content:center;font-family:sans-serif;color:#7C877E;}'}</style>
-        {metaError ? 'Nie udało się połączyć z serwerem API. Sprawdź, czy backend działa i czy adres VITE_API_URL jest poprawny.' : 'Wczytywanie…'}
+      <div className="boot-screen">
+        {metaError ? (
+          <div className="card boot-card">
+            <h3>Brak połączenia z API</h3>
+            <p style={{ color: 'var(--ink-soft)', margin: '0 0 14px' }}>{metaError}</p>
+            <p style={{ color: 'var(--ink-faint)', fontSize: 13, margin: '0 0 14px' }}>
+              Sprawdź, czy backend jest uruchomiony i czy adres API (VITE_API_URL / konfiguracja nginx)
+              jest poprawny.
+            </p>
+            <button className="btn primary" onClick={() => window.location.reload()}>
+              Spróbuj ponownie
+            </button>
+          </div>
+        ) : (
+          <span style={{ color: 'var(--ink-faint)' }}>Wczytywanie…</span>
+        )}
       </div>
     );
   }
+
+  const unread = notifications.filter((n) => !n.read).length;
+  const panelReady = user && !user.mustChangePassword;
 
   return (
     <div className="gz-root">
@@ -129,18 +193,17 @@ export default function App() {
           setView={setView}
           onOpenLogin={() => setShowLogin(true)}
           onOpenChangePassword={() => setShowChangePassword(true)}
-          onLogout={handleLogout}
+          onLogout={() => logout('Wylogowano')}
           unread={unread}
           notifications={notifications}
           onMarkAllRead={handleMarkAllRead}
           onMarkOneRead={handleMarkOneRead}
+          offline={offline}
         />
 
-        {view === 'form' && (
-          <PublicForm meta={meta} onSubmit={handleSubmitRequest} showToast={showToast} />
-        )}
+        {view === 'form' && <PublicForm meta={meta} onSubmit={handleSubmitRequest} showToast={showToast} />}
 
-        {view === 'panel' && user && user.isAdmin && (
+        {view === 'panel' && panelReady && user.isAdmin && (
           <AdminPanel
             meta={meta}
             requests={requests}
@@ -149,11 +212,12 @@ export default function App() {
             onUpdateAssignees={handleUpdateAssignees}
             onTransfer={handleTransfer}
             onMarkSeen={handleMarkSeen}
+            onDeleteRequest={handleDeleteRequest}
             showToast={showToast}
           />
         )}
 
-        {view === 'panel' && user && !user.isAdmin && (
+        {view === 'panel' && panelReady && !user.isAdmin && (
           <EmployeePanel
             meta={meta}
             requests={requests}
@@ -165,10 +229,22 @@ export default function App() {
         )}
       </div>
 
-      {showLogin && <LoginModal onClose={() => setShowLogin(false)} onLogin={handleLogin} />}
-      {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} showToast={showToast} />}
+      {showLogin && !user && <LoginModal onClose={() => setShowLogin(false)} onLogin={handleLogin} />}
 
-      <div className={`toast ${toast ? 'show' : ''}`}>{toast}</div>
+      {showChangePassword && user && (
+        <ChangePasswordModal
+          forced={!!user.mustChangePassword}
+          minLength={meta.passwordMinLength || 10}
+          onClose={() => setShowChangePassword(false)}
+          onChanged={handlePasswordChanged}
+          showToast={showToast}
+        />
+      )}
+
+      {/* aria-live: komunikat trafia też do czytnika ekranu, nie tylko na ekran */}
+      <div className={`toast ${toast ? 'show' : ''}`} role="status" aria-live="polite">
+        {toast}
+      </div>
     </div>
   );
 }

@@ -49,7 +49,7 @@ export default function EmployeePanel({ meta, requests, currentUser, onUpdateSta
 
       <div className="board" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
         {myCards.map(({ req, task }) => (
-          <TaskCard key={req.id + task.id} meta={meta} req={req} task={task} mode="employee" currentUser={currentUser}
+          <TaskCard key={task.id} meta={meta} req={req} task={task} mode="employee" currentUser={currentUser}
             onUpdateStatus={onUpdateStatus} onTransfer={onTransfer} showToast={showToast} />
         ))}
       </div>

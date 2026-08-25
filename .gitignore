@@ -1,5 +1,25 @@
+# zależności
 node_modules/
-dist/
-data/
-*.log
+
+# artefakty builda
+client/dist/
+
+# dane aplikacji — baza i kopie zapasowe nie należą do repozytorium
+server/data/
+backups/
+*.db
+*.db-wal
+*.db-shm
+
+# konfiguracja z sekretami
 .env
+.env.local
+*.local
+
+# logi
+*.log
+npm-debug.log*
+
+# systemowe
+.DS_Store
+Thumbs.db

@@ -1,0 +1,11 @@
+[Unit]
+Description=Codzienna kopia zapasowa bazy Zgłoszeń Marketing Gezet
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+# Kopia wykona się po starcie serwera, jeśli termin wypadł podczas przestoju.
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

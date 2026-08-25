@@ -1,4 +1,4 @@
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 
 function bm(req) { return [req.brand, req.model].filter(Boolean).join(' ') || 'nowa oferta'; }
 function loc(req) { return req.location || 'naszym salonie'; }
@@ -123,12 +123,18 @@ const REEL_SCRIPTS = {
 
 const MAT_LABELS = { business_cards: 'Wizytówki', flags: 'Flagi', rollups: 'Rollupy', wraps: 'Oklejenie/okleiny', leaflets: 'Ulotki', gadgets: 'Gadżety' };
 
-/** Zwraca tablicę nowych zadań (obiekty gotowe do zapisu w tabeli `tasks`, bez request_id). */
-function buildTasks(req) {
+/**
+ * Zwraca tablicę nowych zadań (obiekty gotowe do zapisu w tabeli `tasks`, bez request_id).
+ *
+ * `fallbackAssignees` to osoby, które dostają zadanie "do ustalenia", gdy ze
+ * zgłoszenia nie da się wyprowadzić nic konkretnego — domyślnie administratorzy
+ * odczytani z bazy, a nie zaszyte na sztywno imię.
+ */
+function buildTasks(req, { fallbackAssignees = [] } = {}) {
   const tasks = [];
   const brandModel = bm(req);
   const add = (category, title, details, assignees, draftText) =>
-    tasks.push({ id: uuidv4(), category, title, details: details || '', assignees: [...assignees], status: 'new', draftText: draftText || '', transferLog: [] });
+    tasks.push({ id: crypto.randomUUID(), category, title, details: details || '', assignees: [...assignees], status: 'new', draftText: draftText || '', transferLog: [] });
 
   const triggers = req.triggers || [];
   const materials = req.materials || [];
@@ -189,7 +195,9 @@ function buildTasks(req) {
     if (materials.includes(k)) add('materials', 'Zamów: ' + MAT_LABELS[k], req.brand || req.model ? 'Dot. ' + brandModel : '', ['inga', 'martyna']);
   });
   if (req.materialsOther) add('materials', 'Zamów: ' + req.materialsOther, '', ['inga', 'martyna']);
-  if (tasks.length === 0) add('digital', 'Do ustalenia z zespołem marketingu', req.notes || '', ['karolina']);
+  if (tasks.length === 0) {
+    add('digital', 'Do ustalenia z zespołem marketingu', req.notes || '', fallbackAssignees);
+  }
   return tasks;
 }
 

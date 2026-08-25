@@ -1,30 +1,87 @@
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const config = require('./config');
 
-const JWT_SECRET = process.env.JWT_SECRET;
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
-
-if (!JWT_SECRET || JWT_SECRET.length < 16) {
-  // Nie pozwalamy wystartować z domyślnym/pustym sekretem — na produkcji
-  // podpisywanie tokenów słabym sekretem oznacza, że każdy może się podszyć
-  // pod dowolnego użytkownika (w tym admina).
-  throw new Error('JWT_SECRET jest niepoprawny lub zbyt krótki. Ustaw silny sekret w pliku .env (patrz .env.example).');
-}
-
+/**
+ * Hashowanie haseł działa asynchronicznie (bcryptjs rozbija pracę na kawałki
+ * przez setImmediate). Wariant `*Sync` przy koszcie 12 blokowałby pętlę
+ * zdarzeń na kilkaset ms — czyli całe API zamierałoby na czas każdego
+ * logowania i każdej zmiany hasła.
+ */
 function hashPassword(plain) {
-  return bcrypt.hashSync(plain, 12);
+  return new Promise((resolve, reject) => {
+    bcrypt.hash(String(plain), config.bcryptRounds, (err, hash) => (err ? reject(err) : resolve(hash)));
+  });
 }
 
 function verifyPassword(plain, hash) {
-  return bcrypt.compareSync(plain, hash);
+  return new Promise((resolve) => {
+    bcrypt.compare(String(plain), String(hash || ''), (err, ok) => resolve(!err && ok === true));
+  });
+}
+
+/**
+ * Porównanie odporne na atak czasowy — używane tam, gdzie wynik porównania
+ * mógłby ujawnić informację o sekrecie.
+ */
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 function signToken(user) {
-  return jwt.sign({ sub: user.id, isAdmin: !!user.is_admin }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign(
+    { sub: user.id, isAdmin: !!user.is_admin, tv: user.token_version || 0 },
+    config.jwtSecret,
+    { expiresIn: config.jwtExpiresIn }
+  );
 }
 
 function verifyToken(token) {
-  return jwt.verify(token, JWT_SECRET);
+  return jwt.verify(token, config.jwtSecret);
 }
 
-module.exports = { hashPassword, verifyPassword, signToken, verifyToken };
+/** Losowe, czytelne hasło startowe (bez znaków mylących: 0/O, 1/l/I). */
+function generatePassword(length = 16) {
+  const alphabet = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.randomBytes(length);
+  let out = '';
+  for (let i = 0; i < length; i++) out += alphabet[bytes[i] % alphabet.length];
+  return out;
+}
+
+/**
+ * Minimalne wymagania dla hasła. Świadomie stawiamy na długość, a nie na
+ * wymuszanie znaków specjalnych — dłuższe hasło daje realnie więcej entropii
+ * niż "Haslo1!" i jest łatwiejsze do zapamiętania.
+ */
+const MIN_PASSWORD_LENGTH = 10;
+const MAX_PASSWORD_LENGTH = 128;
+
+function validatePassword(password) {
+  const value = String(password || '');
+  if (value.length < MIN_PASSWORD_LENGTH) {
+    return `Hasło musi mieć co najmniej ${MIN_PASSWORD_LENGTH} znaków.`;
+  }
+  if (value.length > MAX_PASSWORD_LENGTH) {
+    return `Hasło może mieć najwyżej ${MAX_PASSWORD_LENGTH} znaków.`;
+  }
+  if (/^\s|\s$/.test(value)) {
+    return 'Hasło nie może zaczynać się ani kończyć spacją.';
+  }
+  return null;
+}
+
+module.exports = {
+  hashPassword,
+  verifyPassword,
+  safeEqual,
+  signToken,
+  verifyToken,
+  generatePassword,
+  validatePassword,
+  MIN_PASSWORD_LENGTH,
+};

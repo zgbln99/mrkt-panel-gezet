@@ -1,0 +1,56 @@
+# Usługa systemd dla backendu (wariant bez Dockera i bez PM2).
+#
+#   sudo cp deploy/gezet-marketing.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gezet-marketing
+#   sudo systemctl status gezet-marketing
+#   journalctl -u gezet-marketing -f          # podgląd logów
+#
+# systemd wystarcza w zupełności — PM2 to dodatkowy proces do pilnowania,
+# a restart po awarii i start po reboocie systemd zapewnia sam.
+
+[Unit]
+Description=Zgłoszenia Marketing Gezet — API i panel
+Documentation=file:///var/www/gezet-marketing/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gezet
+Group=gezet
+WorkingDirectory=/var/www/gezet-marketing/server
+EnvironmentFile=/var/www/gezet-marketing/server/.env
+ExecStart=/usr/bin/node src/index.js
+
+Restart=always
+RestartSec=5
+# Aplikacja sama domyka bazę po SIGTERM — dajemy jej na to czas.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gezet-marketing
+
+# ─── ograniczenia bezpieczeństwa ───────────────────────────────────────
+# Aplikacja potrzebuje wyłącznie własnego katalogu i sieci lokalnej;
+# reszta systemu pozostaje dla niej niedostępna, więc ewentualne włamanie
+# przez zależność z npm nie sięga poza katalog aplikacji.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/gezet-marketing/server/data /var/www/gezet-marketing/backups
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictSUIDSGID=true
+RemoveIPC=true
+
+[Install]
+WantedBy=multi-user.target

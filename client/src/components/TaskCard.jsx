@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowRightLeft, Send } from 'lucide-react';
-import { bm, timeAgo } from '../utils.js';
+import { bm, timeAgo, safeHref } from '../utils.js';
 
 export default function TaskCard({ meta, req, task, mode, currentUser, onUpdateStatus, onUpdateAssignees, onTransfer, showToast }) {
   const [showTransfer, setShowTransfer] = useState(false);
@@ -12,18 +12,37 @@ export default function TaskCard({ meta, req, task, mode, currentUser, onUpdateS
   const canManage = mode === 'admin' || task.assignees.includes(currentUser.id);
   const others = meta.team.filter((t) => t.id !== currentUser.id);
   const brandModelLabel = bm(req);
+  const listingHref = safeHref(req.listingLink);
 
   const setStatus = async (status) => {
-    if (busy) return;
+    if (busy || task.status === status) return;
     setBusy(true);
-    try { await onUpdateStatus(task.id, status); } finally { setBusy(false); }
+    try {
+      await onUpdateStatus(task.id, status);
+    } catch (e) {
+      showToast(e.message || 'Nie udało się zmienić statusu.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const toggleAssignee = async (pid) => {
     if (busy) return;
-    const assignees = task.assignees.includes(pid) ? task.assignees.filter((a) => a !== pid) : [...task.assignees, pid];
+    const assignees = task.assignees.includes(pid)
+      ? task.assignees.filter((a) => a !== pid)
+      : [...task.assignees, pid];
+    if (assignees.length === 0) {
+      showToast('Zadanie musi mieć przynajmniej jedną osobę odpowiedzialną.');
+      return;
+    }
     setBusy(true);
-    try { await onUpdateAssignees(task.id, assignees); } finally { setBusy(false); }
+    try {
+      await onUpdateAssignees(task.id, assignees);
+    } catch (e) {
+      showToast(e.message || 'Nie udało się zmienić przypisania.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const doTransfer = async () => {
@@ -39,13 +58,29 @@ export default function TaskCard({ meta, req, task, mode, currentUser, onUpdateS
     }
   };
 
-  const copyDraft = () => {
+  // navigator.clipboard jest dostępne tylko w bezpiecznym kontekście (HTTPS
+  // albo localhost). Na stronie serwowanej po zwykłym HTTP wywołanie rzuca
+  // wyjątkiem, dlatego trzymamy zapasową ścieżkę przez ukryte pole tekstowe.
+  const copyDraft = async () => {
     try {
-      navigator.clipboard.writeText(task.draftText).then(
-        () => showToast('Skopiowano treść'),
-        () => showToast('Nie udało się skopiować')
-      );
-    } catch (e) { showToast('Nie udało się skopiować'); }
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(task.draftText);
+        showToast('Skopiowano treść');
+        return;
+      }
+      const helper = document.createElement('textarea');
+      helper.value = task.draftText;
+      helper.setAttribute('readonly', '');
+      helper.style.position = 'fixed';
+      helper.style.opacity = '0';
+      document.body.appendChild(helper);
+      helper.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(helper);
+      showToast(ok ? 'Skopiowano treść' : 'Nie udało się skopiować — zaznacz tekst ręcznie');
+    } catch {
+      showToast('Nie udało się skopiować — zaznacz tekst ręcznie');
+    }
   };
 
   return (
@@ -55,7 +90,12 @@ export default function TaskCard({ meta, req, task, mode, currentUser, onUpdateS
       {task.details && <div className="details">{task.details}</div>}
       <div className="meta">
         {[req.name, req.department, req.location, brandModelLabel !== 'nowa oferta' ? brandModelLabel : ''].filter(Boolean).join(' · ')}
-        {req.listingLink && task.category === 'digital' && (<><br /><a href={req.listingLink} target="_blank" rel="noopener noreferrer">{req.listingLink}</a></>)}
+        {listingHref && task.category === 'digital' && (
+          <>
+            <br />
+            <a href={listingHref} target="_blank" rel="noopener noreferrer">{listingHref}</a>
+          </>
+        )}
       </div>
 
       {req.notes && (

@@ -1,76 +1,99 @@
 const express = require('express');
 const db = require('../db');
-const { verifyPassword, hashPassword, signToken } = require('../auth');
+const {
+  verifyPassword,
+  hashPassword,
+  signToken,
+  validatePassword,
+} = require('../auth');
 const { requireAuth } = require('../middleware/auth');
+const asyncHandler = require('../lib/asyncHandler');
 
 const router = express.Router();
 
-// Bardzo prosty rate-limit w pamięci procesu: max 8 nieudanych prób logowania
-// na adres IP w ciągu 10 minut. Chroni przed prostym brute-force na hasła.
-const attempts = new Map(); // ip -> [timestamps]
-const WINDOW_MS = 10 * 60 * 1000;
-const MAX_ATTEMPTS = 8;
+const selectByUsername = db.prepare('SELECT * FROM users WHERE username = ?');
+const selectById = db.prepare('SELECT * FROM users WHERE id = ?');
+const markLogin = db.prepare('UPDATE users SET last_login_at = ? WHERE id = ?');
+const updatePassword = db.prepare(
+  'UPDATE users SET password_hash = ?, token_version = token_version + 1, must_change_password = 0 WHERE id = ?'
+);
 
-function tooManyAttempts(ip) {
-  const now = Date.now();
-  const list = (attempts.get(ip) || []).filter((t) => now - t < WINDOW_MS);
-  attempts.set(ip, list);
-  return list.length >= MAX_ATTEMPTS;
+function publicUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    name: user.name,
+    role: user.role,
+    isAdmin: !!user.is_admin,
+    mustChangePassword: !!user.must_change_password,
+  };
 }
-function recordFailedAttempt(ip) {
-  const list = attempts.get(ip) || [];
-  list.push(Date.now());
-  attempts.set(ip, list);
-}
 
-router.post('/login', (req, res) => {
-  const ip = req.ip;
-  if (tooManyAttempts(ip)) {
-    return res.status(429).json({ error: 'Zbyt wiele nieudanych prób logowania. Spróbuj ponownie za kilka minut.' });
-  }
+// POST /api/auth/login
+router.post(
+  '/login',
+  asyncHandler(async (req, res) => {
+    const { username, password } = req.body || {};
+    if (!username || !password || typeof username !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ error: 'Podaj login i hasło.' });
+    }
 
-  const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: 'Podaj login i hasło.' });
+    const user = selectByUsername.get(username.trim().toLowerCase().slice(0, 64));
 
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(String(username).trim().toLowerCase());
-  if (!user || !verifyPassword(password, user.password_hash)) {
-    recordFailedAttempt(ip);
-    return res.status(401).json({ error: 'Nieprawidłowy login lub hasło.' });
-  }
+    // Hash porównujemy także dla nieistniejącego loginu (na stałej atrapie),
+    // żeby czas odpowiedzi nie zdradzał, które loginy istnieją w systemie.
+    const hash = user ? user.password_hash : '$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinv';
+    const ok = await verifyPassword(password, hash);
 
-  const token = signToken(user);
-  res.json({
-    token,
-    user: { id: user.id, username: user.username, name: user.name, role: user.role, isAdmin: !!user.is_admin },
-  });
-});
+    if (!user || !ok) {
+      return res.status(401).json({ error: 'Nieprawidłowy login lub hasło.' });
+    }
 
+    markLogin.run(new Date().toISOString(), user.id);
+    // Udane logowanie zeruje licznik nieudanych prób dla tego adresu IP.
+    if (typeof req.resetLoginAttempts === 'function') req.resetLoginAttempts();
+
+    res.json({ token: signToken(user), user: publicUser(user) });
+  })
+);
+
+// GET /api/auth/me — odtworzenie sesji z zapisanego tokenu
 router.get('/me', requireAuth, (req, res) => {
   res.json({ user: req.user });
 });
 
-// POST /api/auth/change-password — każdy zalogowany zmienia WŁASNE hasło,
-// wymaga podania aktualnego hasła (chroni przed przejęciem konta z
-// pozostawionej otwartej sesji).
-router.post('/change-password', requireAuth, (req, res) => {
-  const { currentPassword, newPassword } = req.body || {};
-  if (!currentPassword || !newPassword) {
-    return res.status(400).json({ error: 'Podaj aktualne i nowe hasło.' });
-  }
-  if (String(newPassword).length < 8) {
-    return res.status(400).json({ error: 'Nowe hasło musi mieć co najmniej 8 znaków.' });
-  }
+// POST /api/auth/change-password — zmiana WŁASNEGO hasła.
+// Wymaga aktualnego hasła, dzięki czemu porzucona, otwarta sesja nie
+// wystarcza do trwałego przejęcia konta.
+router.post(
+  '/change-password',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Podaj aktualne i nowe hasło.' });
+    }
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!user || !verifyPassword(currentPassword, user.password_hash)) {
-    return res.status(401).json({ error: 'Aktualne hasło jest nieprawidłowe.' });
-  }
-  if (verifyPassword(newPassword, user.password_hash)) {
-    return res.status(400).json({ error: 'Nowe hasło musi różnić się od poprzedniego.' });
-  }
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) return res.status(400).json({ error: passwordError });
 
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(newPassword), user.id);
-  res.json({ ok: true });
-});
+    const user = selectById.get(req.user.id);
+    if (!user || !(await verifyPassword(currentPassword, user.password_hash))) {
+      return res.status(401).json({ error: 'Aktualne hasło jest nieprawidłowe.' });
+    }
+    if (await verifyPassword(newPassword, user.password_hash)) {
+      return res.status(400).json({ error: 'Nowe hasło musi różnić się od poprzedniego.' });
+    }
+
+    const hash = await hashPassword(newPassword);
+    updatePassword.run(hash, user.id);
+
+    // token_version wzrósł, więc dotychczasowy token (także ten w tej
+    // przeglądarce) przestał być ważny — odsyłamy świeży, żeby osoba
+    // zmieniająca hasło nie została wylogowana w trakcie pracy.
+    const updated = selectById.get(user.id);
+    res.json({ ok: true, token: signToken(updated), user: publicUser(updated) });
+  })
+);
 
 module.exports = router;

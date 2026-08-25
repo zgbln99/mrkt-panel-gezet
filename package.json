@@ -1,0 +1,20 @@
+{
+  "name": "gezet-marketing",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Zgłoszenia Marketing Gezet — publiczny formularz zgłoszeń i panel zadań zespołu marketingu",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "setup": "npm --prefix server install && npm --prefix client install",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server start",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "seed": "npm --prefix server run seed",
+    "set-password": "npm --prefix server run set-password --",
+    "backup": "npm --prefix server run backup",
+    "test": "npm --prefix server test"
+  }
+}

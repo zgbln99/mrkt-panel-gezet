@@ -3,16 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Zgłoszenia Marketing Gezet</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
+    <title>Zgłoszenia Marketing — Grupa Gezet</title>
+    <meta
+      name="description"
+      content="Wewnętrzny formularz zgłoszeń do działu marketingu Grupa Gezet oraz panel zadań zespołu."
     />
+    <!-- Narzędzie wewnętrzne — nie chcemy go w wynikach wyszukiwania. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#2B6777" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#10151A" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!--
+      Czcionki ładowane są z tego samego serwera (client/src/fonts.css), więc
+      nie ma tu żadnych połączeń do zewnętrznych domen — patrz komentarz w
+      fonts.css.
+    -->
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      Ta aplikacja wymaga włączonej obsługi JavaScript. Włącz ją w ustawieniach
+      przeglądarki i odśwież stronę.
+    </noscript>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

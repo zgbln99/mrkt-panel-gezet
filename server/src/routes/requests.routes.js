@@ -1,153 +1,237 @@
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const config = require('../config');
+const { requireAuth, requireAdmin, blockUntilPasswordChanged } = require('../middleware/auth');
 const { buildTasks, bm } = require('../lib/tasksBuilder');
-const { TEAM } = require('../lib/team');
+const { TEAM, TRIGGERS, MATERIALS } = require('../lib/team');
+const { str, idList, safeUrl, isoDate } = require('../lib/validate');
+const store = require('../lib/store');
 
 const router = express.Router();
+
 const TEAM_IDS = new Set(TEAM.map((t) => t.id));
+const TRIGGER_IDS = new Set(TRIGGERS.map((t) => t.id));
+const MATERIAL_IDS = new Set(MATERIALS.map((m) => m.id));
 
-function taskRowToJson(row) {
-  return {
-    id: row.id,
-    category: row.category,
-    title: row.title,
-    details: row.details || '',
-    assignees: JSON.parse(row.assignees || '[]'),
-    status: row.status,
-    draftText: row.draft_text || '',
-    transferLog: JSON.parse(row.transfer_log || '[]'),
-  };
+const DEPARTMENTS = new Set([
+  'Sprzedaż / Handlowy',
+  'Serwis',
+  'Likwidacja szkód',
+  'Finanse i ubezpieczenia',
+  'Inny dział',
+]);
+
+const insertRequest = db.prepare(`
+  INSERT INTO requests (id, created_at, seen, name, department, location, brand, model, campaign_period,
+                        triggers, materials, materials_other, listing_link, event_name, event_date, notes)
+  VALUES (@id, @createdAt, 0, @name, @department, @location, @brand, @model, @campaignPeriod,
+          @triggers, @materials, @materialsOther, @listingLink, @eventName, @eventDate, @notes)
+`);
+
+const insertTask = db.prepare(`
+  INSERT INTO tasks (id, request_id, category, title, details, assignees, status, draft_text, transfer_log, updated_at)
+  VALUES (@id, @requestId, @category, @title, @details, '[]', 'new', @draftText, '[]', @createdAt)
+`);
+
+const selectAdminIds = db.prepare('SELECT id FROM users WHERE is_admin = 1');
+const selectKnownUserIds = db.prepare('SELECT id FROM users');
+
+/** Osoby, które faktycznie mają konto — do nich trafiają powiadomienia. */
+function knownUserIds() {
+  return new Set(selectKnownUserIds.all().map((u) => u.id));
 }
 
-function requestRowToJson(row, tasks) {
-  return {
-    id: row.id,
-    createdAt: row.created_at,
-    seen: !!row.seen,
-    name: row.name,
-    department: row.department,
-    location: row.location,
-    brand: row.brand,
-    model: row.model,
-    campaignPeriod: row.campaign_period,
-    triggers: JSON.parse(row.triggers || '[]'),
-    materials: JSON.parse(row.materials || '[]'),
-    materialsOther: row.materials_other,
-    listingLink: row.listing_link,
-    eventName: row.event_name,
-    eventDate: row.event_date,
-    notes: row.notes,
-    tasks,
-  };
-}
+/* --------------------------- publiczny formularz --------------------------- */
 
-function pushNotification({ id, userId, text, requestId, taskId }) {
-  db.prepare(
-    'INSERT INTO notifications (id, user_id, text, read, at, request_id, task_id) VALUES (?, ?, ?, 0, ?, ?, ?)'
-  ).run(id, userId, text, new Date().toISOString(), requestId || null, taskId || null);
-}
-
-// POST /api/requests — publiczny formularz zgłoszeniowy, bez logowania
+// POST /api/requests — dostępny bez logowania (formularz dla handlowców).
 router.post('/', (req, res) => {
   const body = req.body || {};
-  const name = String(body.name || '').trim();
+
+  const name = str(body.name, 120);
   if (!name) return res.status(400).json({ error: 'Podaj imię i nazwisko.' });
 
-  const triggers = Array.isArray(body.triggers) ? body.triggers : [];
-  const materials = Array.isArray(body.materials) ? body.materials : [];
-  const materialsOther = String(body.materialsOther || '').trim();
+  const triggers = idList(body.triggers, TRIGGER_IDS, TRIGGERS.length);
+  const materials = idList(body.materials, MATERIAL_IDS, MATERIALS.length);
+  const materialsOther = str(body.materialsOther, 200);
+
   if (triggers.length === 0 && materials.length === 0 && !materialsOther) {
     return res.status(400).json({ error: 'Zaznacz przynajmniej jeden typ zgłoszenia albo materiał.' });
   }
 
-  const reqObj = {
-    brand: String(body.brand || '').trim(),
-    model: String(body.model || '').trim(),
-    location: String(body.location || '').trim(),
-    campaignPeriod: String(body.campaignPeriod || '').trim(),
+  const department = str(body.department, 60);
+  const listingLinkRaw = str(body.listingLink, 500);
+  const listingLink = safeUrl(listingLinkRaw);
+  if (listingLinkRaw && !listingLink) {
+    return res.status(400).json({ error: 'Link do ogłoszenia musi być poprawnym adresem http:// lub https://.' });
+  }
+
+  const payload = {
+    name,
+    department: DEPARTMENTS.has(department) ? department : 'Inny dział',
+    location: str(body.location, 80),
+    brand: str(body.brand, 60),
+    model: str(body.model, 60),
+    campaignPeriod: str(body.campaignPeriod, 80),
     triggers,
     materials,
     materialsOther,
-    listingLink: String(body.listingLink || '').trim(),
-    eventName: String(body.eventName || '').trim(),
-    eventDate: String(body.eventDate || '').trim(),
-    notes: String(body.notes || '').trim(),
+    listingLink,
+    eventName: str(body.eventName, 120),
+    eventDate: isoDate(body.eventDate),
+    notes: str(body.notes, 4000),
   };
 
-  const tasks = buildTasks(reqObj);
-  const id = uuidv4();
+  const adminIds = selectAdminIds.all().map((u) => u.id);
+  const tasks = buildTasks(payload, { fallbackAssignees: adminIds });
+  const known = knownUserIds();
+
+  const id = store.newId();
   const createdAt = new Date().toISOString();
 
-  const insertRequest = db.prepare(`
-    INSERT INTO requests (id, created_at, seen, name, department, location, brand, model, campaign_period, triggers, materials, materials_other, listing_link, event_name, event_date, notes)
-    VALUES (@id, @createdAt, 0, @name, @department, @location, @brand, @model, @campaignPeriod, @triggers, @materials, @materialsOther, @listingLink, @eventName, @eventDate, @notes)
-  `);
-  const insertTask = db.prepare(`
-    INSERT INTO tasks (id, request_id, category, title, details, assignees, status, draft_text, transfer_log)
-    VALUES (@id, @requestId, @category, @title, @details, @assignees, 'new', @draftText, '[]')
-  `);
-
-  const txn = db.transaction(() => {
+  // Wszystko w jednej transakcji: albo zapisujemy zgłoszenie razem z zadaniami
+  // i powiadomieniami, albo nic — bez stanów pośrednich w bazie.
+  const save = db.transaction(() => {
     insertRequest.run({
-      id, createdAt, name,
-      department: String(body.department || '').trim(),
-      location: reqObj.location, brand: reqObj.brand, model: reqObj.model,
-      campaignPeriod: reqObj.campaignPeriod,
-      triggers: JSON.stringify(triggers), materials: JSON.stringify(materials),
-      materialsOther, listingLink: reqObj.listingLink, eventName: reqObj.eventName,
-      eventDate: reqObj.eventDate, notes: reqObj.notes,
+      id,
+      createdAt,
+      name: payload.name,
+      department: payload.department,
+      location: payload.location,
+      brand: payload.brand,
+      model: payload.model,
+      campaignPeriod: payload.campaignPeriod,
+      triggers: JSON.stringify(triggers),
+      materials: JSON.stringify(materials),
+      materialsOther: payload.materialsOther,
+      listingLink: payload.listingLink,
+      eventName: payload.eventName,
+      eventDate: payload.eventDate,
+      notes: payload.notes,
     });
-    tasks.forEach((t) => insertTask.run({
-      id: t.id, requestId: id, category: t.category, title: t.title, details: t.details,
-      assignees: JSON.stringify(t.assignees), draftText: t.draftText,
-    }));
 
-    const assigneeSet = new Set();
-    tasks.forEach((t) => t.assignees.forEach((a) => { if (TEAM_IDS.has(a)) assigneeSet.add(a); }));
-    const brandModelLabel = bm(reqObj);
-    assigneeSet.forEach((a) => {
-      const myTasks = tasks.filter((t) => t.assignees.includes(a));
-      const text = myTasks.length === 1
-        ? `Nowe zadanie: „${myTasks[0].title}” (zgłoszenie: ${name}${reqObj.brand ? ', ' + brandModelLabel : ''})`
-        : `${myTasks.length} nowych zadań ze zgłoszenia: ${name}${reqObj.brand ? ', ' + brandModelLabel : ''}`;
-      pushNotification({ id: uuidv4(), userId: a, text, requestId: id });
-    });
-    if (!assigneeSet.has('karolina')) {
-      pushNotification({ id: uuidv4(), userId: 'karolina', text: `Nowe zgłoszenie od ${name}: ${brandModelLabel} — ${tasks.length} zadań utworzonych`, requestId: id });
+    for (const task of tasks) {
+      insertTask.run({
+        id: task.id,
+        requestId: id,
+        category: task.category,
+        title: task.title,
+        details: task.details,
+        draftText: task.draftText,
+        createdAt,
+      });
+      store.setAssignees(task.id, task.assignees.filter((a) => TEAM_IDS.has(a)));
+    }
+
+    const brandModelLabel = bm(payload);
+    const notified = new Set();
+
+    for (const task of tasks) {
+      for (const assignee of task.assignees) {
+        if (!known.has(assignee) || notified.has(assignee)) continue;
+        notified.add(assignee);
+        const own = tasks.filter((t) => t.assignees.includes(assignee));
+        const suffix = payload.brand ? `, ${brandModelLabel}` : '';
+        const text =
+          own.length === 1
+            ? `Nowe zadanie: „${own[0].title}” (zgłoszenie: ${name}${suffix})`
+            : `${own.length} nowych zadań ze zgłoszenia: ${name}${suffix}`;
+        store.pushNotification({ userId: assignee, text, requestId: id });
+      }
+    }
+
+    // Administrator zawsze dowiaduje się o nowym zgłoszeniu, nawet jeśli
+    // żadne zadanie nie trafiło bezpośrednio do niego.
+    for (const adminId of adminIds) {
+      if (notified.has(adminId)) continue;
+      store.pushNotification({
+        userId: adminId,
+        text: `Nowe zgłoszenie od ${name}: ${brandModelLabel} — utworzono ${tasks.length} zadań`,
+        requestId: id,
+      });
     }
   });
-  txn();
 
-  res.status(201).json({ tasks });
+  save();
+
+  res.status(201).json({
+    requestId: id,
+    tasks: tasks.map((t) => ({ id: t.id, title: t.title, category: t.category, assignees: t.assignees })),
+  });
 });
 
-// GET /api/requests — panel (admin widzi wszystko, pracownik tylko swoje zadania)
-router.get('/', requireAuth, (req, res) => {
-  const rows = db.prepare('SELECT * FROM requests ORDER BY created_at DESC').all();
-  const allTasks = db.prepare('SELECT * FROM tasks').all();
+/* ------------------------------- panel zespołu ------------------------------- */
+
+// GET /api/requests — admin widzi wszystkie zgłoszenia, pracownik wyłącznie te,
+// w których ma przypisane zadanie (i tylko własne zadania w środku).
+//
+// Filtrowanie odbywa się w zapytaniu SQL, a nie w przeglądarce: dane innych
+// osób nigdy nie opuszczają serwera, więc nie da się ich odczytać z konsoli
+// deweloperskiej ani z ruchu sieciowego.
+router.get('/', requireAuth, blockUntilPasswordChanged, (req, res) => {
+  const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || config.requestsPageSize, 1), 500);
+
+  let requestRows;
+  let taskRows;
+
+  if (req.user.isAdmin) {
+    requestRows = db.prepare('SELECT * FROM requests ORDER BY created_at DESC LIMIT ?').all(limit);
+    const ids = requestRows.map((r) => r.id);
+    taskRows = ids.length
+      ? db.prepare(`SELECT * FROM tasks WHERE request_id IN (${ids.map(() => '?').join(',')})`).all(...ids)
+      : [];
+  } else {
+    requestRows = db
+      .prepare(
+        `SELECT r.* FROM requests r
+          WHERE EXISTS (
+            SELECT 1 FROM tasks t
+              JOIN task_assignees ta ON ta.task_id = t.id
+             WHERE t.request_id = r.id AND ta.user_id = ?
+          )
+          ORDER BY r.created_at DESC
+          LIMIT ?`
+      )
+      .all(req.user.id, limit);
+    const ids = requestRows.map((r) => r.id);
+    taskRows = ids.length
+      ? db
+          .prepare(
+            `SELECT t.* FROM tasks t
+               JOIN task_assignees ta ON ta.task_id = t.id
+              WHERE ta.user_id = ? AND t.request_id IN (${ids.map(() => '?').join(',')})`
+          )
+          .all(req.user.id, ...ids)
+      : [];
+  }
+
+  const assigneesByTask = store.getAssigneesFor(taskRows.map((t) => t.id));
   const tasksByRequest = new Map();
-  allTasks.forEach((t) => {
-    if (!tasksByRequest.has(t.request_id)) tasksByRequest.set(t.request_id, []);
-    tasksByRequest.get(t.request_id).push(t);
-  });
+  for (const row of taskRows) {
+    if (!tasksByRequest.has(row.request_id)) tasksByRequest.set(row.request_id, []);
+    tasksByRequest.get(row.request_id).push(store.taskRowToJson(row, assigneesByTask.get(row.id) || []));
+  }
 
-  const out = [];
-  rows.forEach((row) => {
-    let taskRows = tasksByRequest.get(row.id) || [];
-    if (!req.user.isAdmin) {
-      taskRows = taskRows.filter((t) => JSON.parse(t.assignees || '[]').includes(req.user.id));
-      if (taskRows.length === 0) return; // pracownik nie widzi zgłoszeń bez swoich zadań
-    }
-    out.push(requestRowToJson(row, taskRows.map(taskRowToJson)));
+  res.json({
+    requests: requestRows.map((row) => store.requestRowToJson(row, tasksByRequest.get(row.id) || [])),
   });
-  res.json({ requests: out });
 });
 
-// PATCH /api/requests/:id/seen — tylko admin
-router.patch('/:id/seen', requireAuth, requireAdmin, (req, res) => {
+// PATCH /api/requests/:id/seen — oznaczenie zgłoszenia jako obsłużonego
+router.patch('/:id/seen', requireAuth, blockUntilPasswordChanged, requireAdmin, (req, res) => {
   const result = db.prepare('UPDATE requests SET seen = 1 WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Nie znaleziono zgłoszenia.' });
+  res.json({ ok: true });
+});
+
+// DELETE /api/requests/:id — usunięcie zgłoszenia wraz z zadaniami.
+// Formularz jest publiczny, więc administrator musi mieć czym sprzątnąć spam
+// albo pomyłkowe zgłoszenie bez sięgania do bazy przez SSH.
+router.delete('/:id', requireAuth, blockUntilPasswordChanged, requireAdmin, (req, res) => {
+  const remove = db.transaction(() => {
+    db.prepare('DELETE FROM notifications WHERE request_id = ?').run(req.params.id);
+    return db.prepare('DELETE FROM requests WHERE id = ?').run(req.params.id);
+  });
+  const result = remove();
   if (result.changes === 0) return res.status(404).json({ error: 'Nie znaleziono zgłoszenia.' });
   res.json({ ok: true });
 });

@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/data
+**/backups
+**/.env
+**/*.log
+.git
+.github
+deploy
+README.md

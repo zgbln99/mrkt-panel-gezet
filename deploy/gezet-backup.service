@@ -1,0 +1,18 @@
+# Jednorazowe zadanie kopii zapasowej, uruchamiane przez gezet-backup.timer.
+#
+#   sudo cp deploy/gezet-backup.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gezet-backup.timer
+#   systemctl list-timers gezet-backup.timer
+
+[Unit]
+Description=Kopia zapasowa bazy Zgłoszeń Marketing Gezet
+
+[Service]
+Type=oneshot
+User=gezet
+Group=gezet
+WorkingDirectory=/var/www/gezet-marketing/server
+EnvironmentFile=/var/www/gezet-marketing/server/.env
+Environment=BACKUP_KEEP_DAYS=30
+ExecStart=/usr/bin/node scripts/backup.js /var/www/gezet-marketing/backups

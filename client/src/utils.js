@@ -3,12 +3,38 @@ export function bm(req) {
 }
 
 export function timeAgo(iso) {
-  const d = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(d / 60000);
-  if (m < 1) return 'przed chwilą';
-  if (m < 60) return `${m} min temu`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} godz. temu`;
-  const days = Math.floor(h / 24);
-  return `${days} dni temu`;
+  const diff = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(diff)) return '';
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return 'przed chwilą';
+  if (minutes < 60) return `${minutes} min temu`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} godz. temu`;
+  const days = Math.floor(hours / 24);
+  if (days < 31) return `${days} dni temu`;
+  return new Date(iso).toLocaleDateString('pl-PL');
+}
+
+export function formatDateTime(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('pl-PL');
+}
+
+/**
+ * Przepuszcza wyłącznie adresy http(s).
+ *
+ * Serwer odrzuca już inne schematy przy zapisie, ale ta sama kontrola po
+ * stronie klienta chroni rekordy zapisane starszą wersją aplikacji: adres typu
+ * `javascript:` wstawiony w atrybut href wykonałby cudzy kod w sesji osoby
+ * przeglądającej panel.
+ */
+export function safeHref(url) {
+  if (!url) return null;
+  try {
+    const parsed = new URL(String(url), window.location.origin);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
 }

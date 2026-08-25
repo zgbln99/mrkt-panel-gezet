@@ -1,50 +1,76 @@
+#!/usr/bin/env node
 /**
- * Zakłada domyślne konta zespołu (idempotentnie — pomija już istniejące
- * loginy). Uruchom raz po pierwszym wdrożeniu:
+ * Zakłada konta zespołu marketingu. Uruchamiany raz, po pierwszym wdrożeniu:
  *
  *   npm run seed
  *
- * WAŻNE: zmień poniższe hasła startowe zanim udostępnisz aplikację
- * publicznie, i poproś każdą osobę o zmianę hasła przy pierwszym logowaniu
- * (ta wersja nie ma jeszcze ekranu zmiany hasła — patrz README, sekcja
- * "Dalsze kroki bezpieczeństwa").
+ * Hasła startowe są losowane kryptograficznie i wypisywane JEDEN raz na
+ * ekranie — nie ma ich ani w repozytorium, ani w bazie (w bazie leży wyłącznie
+ * hash bcrypt). Poprzednia wersja trzymała hasła wprost w kodzie tego pliku,
+ * przez co każdy z dostępem do repo znał hasło administratora.
+ *
+ * Każde konto dostaje flagę "musisz zmienić hasło" — przy pierwszym logowaniu
+ * aplikacja wymusi ustawienie własnego hasła, więc losowe hasło startowe jest
+ * jednorazową przepustką, a nie hasłem na stałe.
+ *
+ * Skrypt jest idempotentny: istniejące loginy pomija, więc bezpiecznie
+ * uruchomić go ponownie po dodaniu kogoś do zespołu.
  */
-require('dotenv').config();
-const { v4: uuidv4 } = require('uuid');
 const db = require('../src/db');
-const { hashPassword } = require('../src/auth');
+const { hashPassword, generatePassword } = require('../src/auth');
+const { TEAM } = require('../src/lib/team');
 
-const DEFAULT_USERS = [
-  { username: 'karolina', password: 'zmien-to-haslo-admina', name: 'Karolina Lisowska-Kycia', role: 'Dyrektor Marketingu', isAdmin: true },
-  { username: 'piotr', password: 'zmien-to-haslo-piotr', name: 'Piotr', role: 'Foto', isAdmin: false },
-  { username: 'bogdan', password: 'zmien-to-haslo-bogdan', name: 'Bogdan', role: 'Video', isAdmin: false },
-  { username: 'inga', password: 'zmien-to-haslo-inga', name: 'Inga', role: 'Social / eventy / agencje', isAdmin: false },
-  { username: 'martyna', password: 'zmien-to-haslo-martyna', name: 'Martyna', role: 'Social / eventy / agencje', isAdmin: false },
-  { username: 'zbigniew', password: 'zmien-to-haslo-zbigniew', name: 'Zbigniew', role: 'Google Moja Firma / eventy', isAdmin: false },
-];
+// Kto ma uprawnienia administratora (widzi wszystkie zgłoszenia i zarządza kontami).
+const ADMIN_IDS = new Set(['karolina']);
 
-const insert = db.prepare(`
-  INSERT INTO users (id, username, password_hash, name, role, is_admin)
-  VALUES (@id, @username, @passwordHash, @name, @role, @isAdmin)
-`);
 const exists = db.prepare('SELECT 1 FROM users WHERE username = ?');
+const insert = db.prepare(`
+  INSERT INTO users (id, username, password_hash, name, role, is_admin, token_version, must_change_password, created_at)
+  VALUES (@id, @username, @passwordHash, @name, @role, @isAdmin, 0, 1, @createdAt)
+`);
 
-let created = 0;
-for (const u of DEFAULT_USERS) {
-  if (exists.get(u.username)) {
-    console.log(`↷ pomijam — konto "${u.username}" już istnieje`);
-    continue;
+async function main() {
+  const created = [];
+  const now = new Date().toISOString();
+
+  for (const member of TEAM) {
+    if (exists.get(member.id)) {
+      console.log(`↷ pomijam — konto "${member.id}" już istnieje`);
+      continue;
+    }
+    const password = generatePassword(16);
+    insert.run({
+      id: member.id,
+      username: member.id,
+      passwordHash: await hashPassword(password),
+      name: member.name,
+      role: member.role,
+      isAdmin: ADMIN_IDS.has(member.id) ? 1 : 0,
+      createdAt: now,
+    });
+    created.push({ login: member.id, name: member.name, password });
   }
-  insert.run({
-    id: u.username, // stałe, czytelne id = username (unikalne, wystarczające dla tej skali)
-    username: u.username,
-    passwordHash: hashPassword(u.password),
-    name: u.name,
-    role: u.role,
-    isAdmin: u.isAdmin ? 1 : 0,
-  });
-  created++;
-  console.log(`✓ utworzono konto "${u.username}" (hasło startowe: ${u.password})`);
+
+  if (created.length === 0) {
+    console.log('\nNie utworzono żadnego konta — wszystkie już istniały.');
+    console.log('Aby ustawić komuś nowe hasło: npm run set-password -- <login>');
+    return;
+  }
+
+  console.log('\n' + '='.repeat(64));
+  console.log(' HASŁA STARTOWE — zapisz je teraz, nie da się ich później odczytać');
+  console.log('='.repeat(64));
+  for (const account of created) {
+    console.log(`  ${account.login.padEnd(12)} ${account.password}   (${account.name})`);
+  }
+  console.log('='.repeat(64));
+  console.log('Przekaż każdej osobie jej hasło bezpiecznym kanałem.');
+  console.log('Przy pierwszym logowaniu aplikacja poprosi o ustawienie własnego hasła.');
 }
 
-console.log(`\nGotowe — utworzono ${created} nowych kont. Zmień hasła startowe przed publicznym udostępnieniem aplikacji!`);
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('Nie udało się założyć kont:', err);
+    process.exit(1);
+  });

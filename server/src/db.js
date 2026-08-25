@@ -1,14 +1,16 @@
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
 const Database = require('better-sqlite3');
+const config = require('./config');
 
-const DB_PATH = process.env.DB_PATH || './data/gezet.db';
-const resolved = path.resolve(DB_PATH);
-fs.mkdirSync(path.dirname(resolved), { recursive: true });
+fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
 
-const db = new Database(resolved);
-db.pragma('journal_mode = WAL');
+const db = new Database(config.dbPath);
+
+db.pragma('journal_mode = WAL');   // równoległy odczyt podczas zapisu
 db.pragma('foreign_keys = ON');
+db.pragma('synchronous = NORMAL'); // bezpieczne przy WAL, zauważalnie szybsze
+db.pragma('busy_timeout = 5000');  // zamiast natychmiastowego SQLITE_BUSY
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -64,5 +66,67 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_tasks_request ON tasks(request_id);
 CREATE INDEX IF NOT EXISTS idx_notifs_user ON notifications(user_id);
 `);
+
+/* ------------------------------------------------------------------ *
+ * Migracje — idempotentne, wykonywane przy każdym starcie.
+ * Dzięki temu `git pull && pm2 restart` wystarczy do aktualizacji bazy;
+ * nie ma osobnego kroku migracyjnego do zapomnienia podczas wdrożenia.
+ * ------------------------------------------------------------------ */
+
+function columnNames(table) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+}
+
+function addColumn(table, column, definition) {
+  if (!columnNames(table).includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+// token_version — pozwala unieważnić WSZYSTKIE wydane tokeny danego konta.
+// Bez tego zmiana (lub administracyjny reset) hasła nie wyrzucałaby z aplikacji
+// osoby, która przejęła sesję: skradziony token JWT działałby do wygaśnięcia.
+addColumn('users', 'token_version', 'INTEGER NOT NULL DEFAULT 0');
+// must_change_password — konto założone przez seed lub po resecie hasła przez
+// administratora musi ustawić własne hasło przy pierwszym logowaniu.
+addColumn('users', 'must_change_password', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('users', 'created_at', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'last_login_at', 'TEXT');
+addColumn('tasks', 'updated_at', 'TEXT');
+
+db.exec(`
+CREATE INDEX IF NOT EXISTS idx_requests_created ON requests(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifs_user_at ON notifications(user_id, at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+`);
+
+// Przypisania zadań w osobnej tabeli: pozwala odpytać "zadania osoby X"
+// indeksem zamiast wczytywania wszystkich zadań i parsowania JSON-a w Node.
+// Kolumna tasks.assignees zostaje wyłącznie jako materiał do backfillu.
+db.exec(`
+CREATE TABLE IF NOT EXISTS task_assignees (
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  PRIMARY KEY (task_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_assignees_user ON task_assignees(user_id);
+`);
+
+const backfillNeeded = db.prepare('SELECT COUNT(*) AS n FROM task_assignees').get().n === 0
+  && db.prepare('SELECT COUNT(*) AS n FROM tasks').get().n > 0;
+
+if (backfillNeeded) {
+  const rows = db.prepare('SELECT id, assignees FROM tasks').all();
+  const insert = db.prepare('INSERT OR IGNORE INTO task_assignees (task_id, user_id) VALUES (?, ?)');
+  const run = db.transaction(() => {
+    for (const row of rows) {
+      let list = [];
+      try { list = JSON.parse(row.assignees || '[]'); } catch { list = []; }
+      for (const userId of list) if (userId) insert.run(row.id, userId);
+    }
+  });
+  run();
+  console.log(`[db] migracja: przeniesiono przypisania ${rows.length} zadań do tabeli task_assignees`);
+}
 
 module.exports = db;
