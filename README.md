@@ -194,6 +194,22 @@ Numer portu bywa blokowany przez restrykcyjne firewalle firmowe, więc warto to
 sprawdzić z sieci, z której zespół faktycznie korzysta, zanim rozda się adres
 wszystkim.
 
+#### Jak własne domeny podpina się do takiego hostingu
+
+Dokumentacja Mikr.usa zna dokładnie jedną drogę na własną domenę pod
+standardowym portem: **Cloudflare**, w dwóch wariantach.
+
+- **Cloudflare jako proxy** — rekord AAAA z włączonym proxy (pomarańczowa
+  chmurka). Cloudflare przyjmuje ruch po IPv4 i łączy się z serwerem po IPv6,
+  a regułą *Origin Rules* można wskazać port inny niż 443.
+- **Cloudflare Tunnel** (`cloudflared` na serwerze) — połączenie wychodzi
+  z serwera, więc nie trzeba mieć otwartego żadnego portu przychodzącego.
+
+Oba wymagają, żeby domena była w Cloudflare — czyli przeniesienia serwerów
+nazw **całej** strefy. Natywnego sposobu (bez Cloudflare) na własną domenę pod
+portem 443 ten rodzaj hostingu nie ma; darmowa subdomena `*.wykr.es` działa
+tylko dla ich własnej nazwy.
+
 #### Dlaczego nie Cloudflare dla samej subdomeny
 
 Naturalny pomysł — „przekieruję na Cloudflare tylko `mrkt.gezet.pl`, a reszty
