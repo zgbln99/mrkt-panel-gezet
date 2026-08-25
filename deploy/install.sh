@@ -332,28 +332,72 @@ else
     # godzinę. Zanim uruchomimy certbota, sprawdzamy więc sami, czy domena w ogóle
     # wskazuje na ten serwer — inaczej pierwsza literówka kosztuje godzinę czekania.
     domain_points_here() {
-        local resolved local_ips
+        local resolved acceptable
         resolved="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u)"
         [[ -z "$resolved" ]] && return 2   # brak rekordu A — nie ma czego porównywać
-        local_ips="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$')"
+
+        # Za NAT-em domena wskazuje na adres routera, a nie na adres serwera —
+        # dlatego akceptujemy jedno i drugie.
+        acceptable="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$')"
+        [[ -n "$PUBLIC_IP" ]] && acceptable="$acceptable
+$PUBLIC_IP"
+
         while read -r ip; do
             [[ -z "$ip" ]] && continue
-            grep -qx "$ip" <<< "$local_ips" && return 0
+            grep -qx "$ip" <<< "$acceptable" && return 0
         done <<< "$resolved"
         return 1
     }
 
-    domain_points_here
-    DNS_CHECK=$?
+    if [[ "${SKIP_DNS_CHECK:-0}" == "1" ]]; then
+        # Awaryjna furtka: gdy sprawdzenie myli się przy nietypowej sieci,
+        # a wiemy, że ruch z internetu dochodzi na porty 80 i 443.
+        warn "SKIP_DNS_CHECK=1 — pomijam sprawdzenie DNS i próbuję wystawić certyfikat."
+        DNS_CHECK=0
+    else
+        domain_points_here
+        DNS_CHECK=$?
+    fi
+
+    # Serwer bywa schowany za NAT-em (adres prywatny na interfejsie, publiczny
+    # na routerze). Porównanie samych adresów lokalnych dałoby wtedy fałszywy
+    # alarm, więc pytamy jeszcze, jakim adresem wychodzimy do internetu.
+    PUBLIC_IP="$(curl -4 -fsS --max-time 6 https://api.ipify.org 2>/dev/null \
+        || curl -4 -fsS --max-time 6 https://ifconfig.me/ip 2>/dev/null \
+        || curl -4 -fsS --max-time 6 https://icanhazip.com 2>/dev/null \
+        || true)"
+    PUBLIC_IP="$(tr -d '[:space:]' <<< "$PUBLIC_IP")"
 
     dns_records_hint() {
+        local target="$SERVER_IPV4"
+
+        # Adres z RFC 1918 nie działa w publicznym DNS — trzeba wskazać adres,
+        # którym serwer wychodzi do internetu, i przekierować na nim porty.
+        if [[ "$SERVER_IPV4" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
+            warn "Serwer ma adres prywatny ($SERVER_IPV4) — stoi za NAT-em."
+            if [[ -n "$PUBLIC_IP" ]]; then
+                target="$PUBLIC_IP"
+                warn "Adres publiczny tej sieci: $PUBLIC_IP"
+                if [[ "$PUBLIC_IP" =~ ^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\. ]]; then
+                    warn "UWAGA: ten adres pochodzi z puli CGNAT operatora — połączeń"
+                    warn "przychodzących nie da się na niego przekierować. Potrzebny będzie"
+                    warn "tunel (np. Cloudflare Tunnel) albo publiczny adres od operatora."
+                fi
+            else
+                target="<PUBLICZNY-ADRES-TWOJEJ-SIECI>"
+                warn "Nie udało się ustalić adresu publicznego — sprawdź: curl -4 https://ifconfig.me"
+            fi
+            warn "Na routerze przekieruj porty 80 i 443 na $SERVER_IPV4."
+        fi
+
         warn "Załóż w DNS takie rekordy dla $DOMAIN:"
-        warn "    A     $DOMAIN   →  $SERVER_IPV4"
+        warn "    A     $DOMAIN   →  $target"
         if [[ -n "$SERVER_IPV6" ]]; then
             warn "    AAAA  $DOMAIN   →  $SERVER_IPV6     (opcjonalnie)"
         else
             warn "    (bez rekordu AAAA — ten serwer nie ma globalnego IPv6)"
         fi
+        warn "TTL na start ustaw nisko, np. 300 sekund."
         warn "Po propagacji uruchom: sudo certbot --nginx -d $DOMAIN"
         warn "Jeśli domena stoi za Cloudflare, na czas wystawiania certyfikatu wyłącz proxy (szara chmurka)."
     }

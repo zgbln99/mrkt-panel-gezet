@@ -155,6 +155,54 @@ zapasową, konfiguruje nginx-a, firewall oraz certyfikat HTTPS.
 Jest idempotentny — można go uruchomić ponownie; istniejącej bazy ani `.env`
 nie nadpisuje.
 
+### Serwer za NAT-em (adres prywatny)
+
+Jeśli `ip -4 addr` pokazuje adres z puli prywatnej (`192.168.x.x`, `10.x.x.x`,
+`172.16–31.x.x`), serwer nie jest widoczny z internetu bezpośrednio. W DNS
+trzeba wtedy wpisać **publiczny adres sieci**, a na routerze przekierować porty.
+
+Wszystko potrzebne wypisze:
+
+```bash
+bash deploy/dns-info.sh mrkt.gezet.pl
+```
+
+Skrypt niczego nie zmienia — pokazuje adresy serwera, adres publiczny sieci,
+gotowe wartości do formularza DNS i sprawdza, na co domena wskazuje w tej chwili.
+
+Potrzebne będą dwie rzeczy:
+
+1. **Przekierowanie portów na routerze** — `80/TCP` i `443/TCP` na adres
+   prywatny serwera. Port 80 musi zostać otwarty na stałe: tędy idzie
+   walidacja przy każdym odnawianiu certyfikatu, nie tylko przy pierwszym.
+2. **Rekord A** wskazujący na publiczny adres sieci.
+
+Dwie rzeczy potrafią to uniemożliwić — warto sprawdzić je zawczasu:
+
+- **CGNAT.** Gdy adres publiczny zaczyna się od `100.64.`–`100.127.`, operator
+  współdzieli go między wielu klientów i nie da się przekierować na niego
+  połączeń przychodzących. Rozwiązania: publiczny adres IP od operatora
+  (zwykle płatna opcja) albo tunel, np. Cloudflare Tunnel.
+- **Zmienny adres publiczny.** Na łączach bez stałego IP rekord A przestanie
+  pasować po każdej zmianie. Wtedy potrzebny jest DDNS.
+
+### Kilka aplikacji na jednym serwerze
+
+nginx obsługuje wiele aplikacji naraz — rozdziela je po nazwie domeny. Ta
+aplikacja nie przeszkadza innym, trzeba jednak pamiętać o dwóch rzeczach:
+
+- **Nasz plik konfiguracyjny zawiera blok `default_server`**, który odrzuca
+  żądania z niepasującą nazwą hosta (patrz sekcja Bezpieczeństwo). W nginx
+  `default_server` może istnieć tylko raz na port, więc **druga aplikacja nie
+  może go deklarować** — ma zwyczajnie ustawić własne `server_name`.
+- **Druga aplikacja musi słuchać na innym porcie lokalnym niż 4000.**
+
+Konfiguracja drugiej aplikacji to osobny plik w `/etc/nginx/sites-available/`
+z własnym `server_name` i własnym `proxy_pass`, a certyfikat wydaje się dla niej
+osobno (`sudo certbot --nginx -d druga.domena.pl`). Uruchomienie
+`deploy/install.sh` nie rusza cudzych plików — nadpisuje wyłącznie własny
+`gezet-marketing`.
+
 ### Wdrożenie bez domeny — sam adres IPv4
 
 Gdy domeny jeszcze nie ma, podaj skryptowi adres IP serwera zamiast nazwy:
@@ -251,6 +299,7 @@ w katalogu `deploy/`:
 | `deploy/gezet-certbot-renew.service` + `.timer` | odnawianie krótkiego certyfikatu dla adresu IP |
 | `deploy/ecosystem.config.js` | konfiguracja PM2, jeśli wolisz PM2 od systemd |
 | `deploy/install.sh` | pełna instalacja — można czytać jak instrukcję |
+| `deploy/dns-info.sh` | co wpisać w DNS: adresy serwera, NAT, stan propagacji |
 | `deploy/update.sh` | wdrożenie nowej wersji |
 
 Skrócona ścieżka ręczna:
