@@ -1,0 +1,14 @@
+# Odnawianie certyfikatu Let's Encrypt.
+#
+# Certyfikaty wystawiane dla adresów IP są ważne 160 godzin (nieco ponad
+# 6 dni), więc odnawianie musi chodzić regularnie — przy zwykłym, 90-dniowym
+# certyfikacie awaria timera bywa niezauważona tygodniami, tutaj położyłaby
+# aplikację w niecały tydzień.
+[Unit]
+Description=Odnowienie certyfikatu Zgłoszeń Marketing Gezet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/certbot renew --quiet --deploy-hook "systemctl reload nginx"

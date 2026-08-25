@@ -1,0 +1,13 @@
+[Unit]
+Description=Regularne odnawianie certyfikatu Zgłoszeń Marketing Gezet
+
+[Timer]
+# Cztery razy dziennie: certbot i tak odnawia dopiero, gdy zostaje mniej niż
+# jedna trzecia okresu ważności, ale przy certyfikacie sześciodniowym chcemy
+# mieć kilka podejść zapasu, zanim przestanie być ważny.
+OnCalendar=*-*-* 0,6,12,18:17:00
+Persistent=true
+RandomizedDelaySec=20m
+
+[Install]
+WantedBy=timers.target

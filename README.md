@@ -136,6 +136,58 @@ zapasową, konfiguruje nginx-a, firewall oraz certyfikat HTTPS.
 Jest idempotentny — można go uruchomić ponownie; istniejącej bazy ani `.env`
 nie nadpisuje.
 
+### Wdrożenie bez domeny — sam adres IPv4
+
+Gdy domeny jeszcze nie ma, podaj skryptowi adres IP serwera zamiast nazwy:
+
+```bash
+sudo bash deploy/install.sh 203.0.113.10        # ← adres tego serwera
+```
+
+Let's Encrypt wydaje certyfikaty **także dla samych adresów IP** (ogólnie
+dostępne od 15 stycznia 2026), więc panel działa po zwykłym, zaufanym HTTPS —
+bez ostrzeżeń w przeglądarce i bez sztuczek w aplikacji mobilnej. Skrypt
+załatwia to sam; warto jednak wiedzieć, na czym rzecz polega:
+
+| | Certyfikat dla domeny | Certyfikat dla adresu IP |
+|---|---|---|
+| Ważność | 90 dni | **160 godzin (~6,5 dnia)** |
+| Wymagany certbot | dowolny | **5.4 lub nowszy** |
+| Profil ACME | domyślny | `shortlived` |
+| Instalacja w nginx | wtyczka `--nginx` | ręcznie (wtyczka nie obsługuje IP) |
+
+Praktyczne konsekwencje:
+
+- **Certbot z Ubuntu 24.04 (2.9) jest za stary.** Skrypt instaluje nowszego
+  w osobnym środowisku Pythona (`/opt/certbot`), nie ruszając systemowego.
+- **Odnawianie musi działać.** Przy 90-dniowym certyfikacie zepsuty timer bywa
+  niezauważony tygodniami; tutaj położyłby aplikację w niecały tydzień. Skrypt
+  zakłada własny timer chodzący cztery razy na dobę:
+
+  ```bash
+  systemctl list-timers gezet-certbot-renew.timer
+  sudo certbot certificates          # data ważności
+  ```
+
+- **Port 80 musi być osiągalny z internetu** — tędy idzie walidacja przy
+  każdym odnowieniu, nie tylko przy pierwszym wydaniu.
+- Gdyby certyfikat się nie udał, aplikacja zostaje na HTTP i skrypt mówi o tym
+  wprost. Nie logujcie się wtedy z sieci publicznych — hasło idzie otwartym
+  tekstem.
+
+W aplikacji mobilnej wpisz jako adres serwera po prostu `203.0.113.10` —
+uzupełni go do `https://203.0.113.10/api`.
+
+**Przejście na domenę później** to jedna komenda; certyfikat dla IP i wpis
+nginx zostaną zastąpione:
+
+```bash
+sudo bash deploy/install.sh panel.twojafirma.pl
+```
+
+Baza, konta i `.env` pozostają nietknięte. Pamiętajcie tylko zmienić adres
+serwera w aplikacji mobilnej (Więcej → Ustawienia).
+
 ### Droga B — Docker Compose
 
 ```bash
@@ -173,9 +225,11 @@ w katalogu `deploy/`:
 
 | Plik | Do czego |
 |---|---|
-| `deploy/nginx.conf` | reverse proxy, cache statyki, limit żądań |
+| `deploy/nginx.conf` | reverse proxy dla domeny — cache statyki, limit żądań |
+| `deploy/nginx-ip.conf` | wariant bez domeny: HTTPS pod samym adresem IPv4 |
 | `deploy/gezet-marketing.service` | usługa systemd (z ograniczeniami dostępu do systemu) |
 | `deploy/gezet-backup.service` + `.timer` | codzienna kopia zapasowa o 2:30 |
+| `deploy/gezet-certbot-renew.service` + `.timer` | odnawianie krótkiego certyfikatu dla adresu IP |
 | `deploy/ecosystem.config.js` | konfiguracja PM2, jeśli wolisz PM2 od systemd |
 | `deploy/install.sh` | pełna instalacja — można czytać jak instrukcję |
 | `deploy/update.sh` | wdrożenie nowej wersji |

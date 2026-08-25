@@ -29,14 +29,26 @@ warn()  { printf '\033[1;33m! %s\033[0m\n' "$*"; }
 die()   { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "Uruchom przez sudo: sudo bash deploy/install.sh twoja-domena.pl"
-[[ -n "$DOMAIN" ]] || die "Podaj domenę: sudo bash deploy/install.sh marketing.twoja-firma.pl"
+[[ -n "$DOMAIN" ]] || die "Podaj domenę albo adres IPv4: sudo bash deploy/install.sh 203.0.113.10"
 
-# Domena z przykładu w dokumentacji nie należy do nikogo z nas — wpisana
-# dosłownie kończy się nieudaną walidacją certyfikatu i zużyciem limitu prób
-# w Let's Encrypt.
-if [[ "$DOMAIN" =~ (twoja-firma\.pl|TWOJA-DOMENA|przyklad\.pl|example\.com)$ ]]; then
-    die "\"$DOMAIN\" to domena z przykładu w dokumentacji. Podaj własną, np. panel.gezet.pl"
+# Skrypt obsługuje dwa tryby: domenę i sam adres IPv4 (gdy domeny jeszcze nie ma).
+# Let's Encrypt wydaje certyfikaty także dla adresów IP — są jednak krótsze
+# (160 godzin) i wymagają nowszego certbota niż ten z repozytorium Ubuntu.
+if [[ "$DOMAIN" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    MODE="ip"
+    for octet in ${DOMAIN//./ }; do
+        (( octet <= 255 )) || die "\"$DOMAIN\" nie jest poprawnym adresem IPv4."
+    done
+else
+    MODE="domain"
+    # Domena z przykładu w dokumentacji nie należy do nikogo z nas — wpisana
+    # dosłownie kończy się nieudaną walidacją certyfikatu i zużyciem limitu prób
+    # w Let's Encrypt.
+    if [[ "$DOMAIN" =~ (twoja-firma\.pl|TWOJA-DOMENA|przyklad\.pl|example\.com)$ ]]; then
+        die "\"$DOMAIN\" to domena z przykładu w dokumentacji. Podaj własną, np. panel.gezet.pl"
+    fi
 fi
+BASE_URL="https://$DOMAIN"
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [[ -d "$SOURCE_DIR/server" && -d "$SOURCE_DIR/client" ]] || die "Nie znaleziono katalogów server/ i client/ obok skryptu."
@@ -147,10 +159,43 @@ systemctl enable --now gezet-backup.timer
 systemctl restart gezet-marketing
 
 # ── 8. nginx ───────────────────────────────────────────────────────────
-info "Konfiguruję nginx dla domeny $DOMAIN"
-sed "s/TWOJA-DOMENA.PL/$DOMAIN/g" "$APP_DIR/deploy/nginx.conf" \
-    > /etc/nginx/sites-available/gezet-marketing
-ln -sf /etc/nginx/sites-available/gezet-marketing /etc/nginx/sites-enabled/gezet-marketing
+NGINX_SITE=/etc/nginx/sites-available/gezet-marketing
+ACME_ROOT=/var/www/letsencrypt
+mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
+
+if [[ "$MODE" == "domain" ]]; then
+    info "Konfiguruję nginx dla domeny $DOMAIN"
+    sed "s/TWOJA-DOMENA.PL/$DOMAIN/g" "$APP_DIR/deploy/nginx.conf" > "$NGINX_SITE"
+else
+    info "Konfiguruję nginx dla adresu $DOMAIN (bez domeny)"
+    # Wariant przejściowy: sam HTTP. Docelowa konfiguracja z TLS wymaga
+    # istniejącego certyfikatu — bez niego nginx nie wystartuje, więc
+    # wgrywamy ją dopiero po jego wydaniu (krok 11).
+    cat > "$NGINX_SITE" <<NGINXCONF
+server {
+    listen 80 default_server;
+    server_name _;
+    server_tokens off;
+    client_max_body_size 512k;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root $ACME_ROOT;
+        default_type "text/plain";
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              \$host;
+        proxy_set_header X-Real-IP         \$remote_addr;
+        proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINXCONF
+fi
+
+ln -sf "$NGINX_SITE" /etc/nginx/sites-enabled/gezet-marketing
 # Domyślna strona nginx-a przechwytywałaby żądania bez pasującego server_name.
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
@@ -176,49 +221,140 @@ curl -fsS http://127.0.0.1:4000/api/health >/dev/null 2>&1 \
     || die "API nie odpowiada. Sprawdź: journalctl -u gezet-marketing -n 50"
 
 # ── 11. HTTPS ──────────────────────────────────────────────────────────
-# Let's Encrypt liczy nieudane walidacje i po kilku próbach blokuje domenę na
-# godzinę. Zanim uruchomimy certbota, sprawdzamy więc sami, czy domena w ogóle
-# wskazuje na ten serwer — inaczej pierwsza literówka kosztuje godzinę czekania.
-domain_points_here() {
-    local resolved local_ips
-    resolved="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u)"
-    [[ -z "$resolved" ]] && return 2   # brak rekordu A — nie ma czego porównywać
-    local_ips="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$')"
-    while read -r ip; do
-        [[ -z "$ip" ]] && continue
-        grep -qx "$ip" <<< "$local_ips" && return 0
-    done <<< "$resolved"
-    return 1
-}
 
-domain_points_here
-DNS_CHECK=$?
+if [[ "$MODE" == "ip" ]]; then
+    info "Konfiguruję certyfikat HTTPS dla adresu $DOMAIN"
 
-if [[ $DNS_CHECK -eq 1 ]]; then
-    warn "Domena $DOMAIN wskazuje na inny adres niż ten serwer — pomijam certyfikat."
-    warn "Popraw rekord A w DNS (wskaż na: $(hostname -I | awk '{print $1}')), odczekaj na propagację i uruchom:"
-    warn "  sudo certbot --nginx -d $DOMAIN"
-    warn "Jeśli używasz Cloudflare, na czas wystawiania certyfikatu wyłącz proxy (szara chmurka)."
-elif [[ $DNS_CHECK -eq 2 ]]; then
-    warn "Domena $DOMAIN nie ma jeszcze rekordu A — pomijam certyfikat."
-    warn "Po dodaniu rekordu uruchom: sudo certbot --nginx -d $DOMAIN"
-else
-info "Konfiguruję certyfikat HTTPS (Let's Encrypt)"
-if apt-get install -y -qq certbot python3-certbot-nginx; then
-    if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect; then
-        echo "  HTTPS działa, certyfikat będzie odnawiany automatycznie."
-    else
-        warn "Nie udało się automatycznie wystawić certyfikatu."
-        warn "Najczęstsza przyczyna: domena $DOMAIN nie wskazuje jeszcze na ten serwer."
-        warn "Po poprawieniu DNS uruchom: sudo certbot --nginx -d $DOMAIN"
+    # Adres musi faktycznie należeć do tego serwera — Let's Encrypt sprawdzi to
+    # w walidacji, a nieudane próby zużywają limit.
+    if ! hostname -I 2>/dev/null | tr ' ' '\n' | grep -qx "$DOMAIN"; then
+        warn "Adres $DOMAIN nie jest przypisany do tego serwera."
+        warn "Adresy tej maszyny: $(hostname -I)"
+        warn "Jeśli serwer stoi za NAT-em, przekieruj porty 80 i 443, po czym uruchom skrypt ponownie."
     fi
-fi
+
+    # Certbot z repozytorium Ubuntu 24.04 to wersja 2.9 — nie zna certyfikatów
+    # dla adresów IP. Potrzebna jest 5.4 lub nowsza (flaga --ip-address oraz
+    # obsługa adresów IP we wtyczce webroot), więc w razie potrzeby instalujemy
+    # go osobno, do własnego środowiska Pythona.
+    certbot_version() { "$1" --version 2>&1 | awk '{print $2}'; }
+
+    certbot_supports_ip() {
+        local version="$1" major minor
+        major="${version%%.*}"
+        minor="$(cut -d. -f2 <<< "$version")"
+        [[ "$major" =~ ^[0-9]+$ ]] || return 1
+        (( major > 5 )) && return 0
+        (( major == 5 )) && (( ${minor:-0} >= 4 )) && return 0
+        return 1
+    }
+
+    CERTBOT_BIN=""
+    for candidate in /usr/local/bin/certbot /opt/certbot/bin/certbot "$(command -v certbot 2>/dev/null || true)"; do
+        [[ -n "$candidate" && -x "$candidate" ]] || continue
+        if certbot_supports_ip "$(certbot_version "$candidate")"; then
+            CERTBOT_BIN="$candidate"
+            break
+        fi
+    done
+
+    if [[ -z "$CERTBOT_BIN" ]]; then
+        info "Instaluję certbota w wersji obsługującej adresy IP"
+        apt-get install -y -qq python3-venv >/dev/null
+        if python3 -m venv /opt/certbot >/dev/null 2>&1 &&
+           /opt/certbot/bin/pip install --quiet --upgrade pip certbot >/dev/null 2>&1; then
+            ln -sf /opt/certbot/bin/certbot /usr/local/bin/certbot
+            certbot_supports_ip "$(certbot_version /opt/certbot/bin/certbot)" &&
+                CERTBOT_BIN=/opt/certbot/bin/certbot
+        fi
+    fi
+
+    if [[ -z "$CERTBOT_BIN" ]]; then
+        warn "Nie udało się przygotować certbota obsługującego adresy IP (wymagana wersja 5.4+)."
+        warn "Aplikacja działa po HTTP — hasła jadą wtedy otwartym tekstem, więc"
+        warn "nie logujcie się z sieci publicznych, dopóki HTTPS nie zadziała."
+        BASE_URL="http://$DOMAIN"
+    else
+        echo "  certbot: $(certbot_version "$CERTBOT_BIN")"
+
+        # --preferred-profile shortlived: Let's Encrypt wydaje certyfikaty dla
+        # adresów IP wyłącznie jako sześciodniowe.
+        # --webroot: nginx nie musi być zatrzymywany na czas walidacji.
+        if "$CERTBOT_BIN" certonly \
+                --webroot --webroot-path "$ACME_ROOT" \
+                --ip-address "$DOMAIN" \
+                --preferred-profile shortlived \
+                --cert-name gezet-ip \
+                --non-interactive --agree-tos --register-unsafely-without-email \
+                --keep-until-expiring; then
+
+            info "Włączam HTTPS w nginx"
+            sed "s/SERWER-IP/$DOMAIN/g" "$APP_DIR/deploy/nginx-ip.conf" > "$NGINX_SITE"
+            nginx -t && systemctl reload nginx
+
+            # Certyfikat jest ważny tylko 160 godzin, więc odnawianie musi
+            # chodzić własnym timerem — bez niego aplikacja przestanie działać
+            # w niecały tydzień.
+            install -m 644 "$APP_DIR/deploy/gezet-certbot-renew.service" /etc/systemd/system/
+            install -m 644 "$APP_DIR/deploy/gezet-certbot-renew.timer"   /etc/systemd/system/
+            systemctl daemon-reload
+            systemctl enable --now gezet-certbot-renew.timer
+            echo "  Certyfikat ważny 6 dni, odnawiany automatycznie cztery razy na dobę."
+        else
+            warn "Nie udało się wystawić certyfikatu dla adresu $DOMAIN."
+            warn "Sprawdź, czy port 80 jest osiągalny z internetu: curl http://$DOMAIN/.well-known/acme-challenge/test"
+            warn "Aplikacja działa po HTTP — hasła jadą wtedy otwartym tekstem."
+            BASE_URL="http://$DOMAIN"
+        fi
+    fi
+
+else
+    # Let's Encrypt liczy nieudane walidacje i po kilku próbach blokuje domenę na
+    # godzinę. Zanim uruchomimy certbota, sprawdzamy więc sami, czy domena w ogóle
+    # wskazuje na ten serwer — inaczej pierwsza literówka kosztuje godzinę czekania.
+    domain_points_here() {
+        local resolved local_ips
+        resolved="$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u)"
+        [[ -z "$resolved" ]] && return 2   # brak rekordu A — nie ma czego porównywać
+        local_ips="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$')"
+        while read -r ip; do
+            [[ -z "$ip" ]] && continue
+            grep -qx "$ip" <<< "$local_ips" && return 0
+        done <<< "$resolved"
+        return 1
+    }
+
+    domain_points_here
+    DNS_CHECK=$?
+
+    if [[ $DNS_CHECK -eq 1 ]]; then
+        warn "Domena $DOMAIN wskazuje na inny adres niż ten serwer — pomijam certyfikat."
+        warn "Popraw rekord A w DNS (wskaż na: $(hostname -I | awk '{print $1}')), odczekaj na propagację i uruchom:"
+        warn "  sudo certbot --nginx -d $DOMAIN"
+        warn "Jeśli używasz Cloudflare, na czas wystawiania certyfikatu wyłącz proxy (szara chmurka)."
+        BASE_URL="http://$DOMAIN"
+    elif [[ $DNS_CHECK -eq 2 ]]; then
+        warn "Domena $DOMAIN nie ma jeszcze rekordu A — pomijam certyfikat."
+        warn "Po dodaniu rekordu uruchom: sudo certbot --nginx -d $DOMAIN"
+        BASE_URL="http://$DOMAIN"
+    else
+        info "Konfiguruję certyfikat HTTPS (Let's Encrypt)"
+        if apt-get install -y -qq certbot python3-certbot-nginx; then
+            if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect; then
+                echo "  HTTPS działa, certyfikat będzie odnawiany automatycznie."
+            else
+                warn "Nie udało się automatycznie wystawić certyfikatu."
+                warn "Po poprawieniu DNS uruchom: sudo certbot --nginx -d $DOMAIN"
+                BASE_URL="http://$DOMAIN"
+            fi
+        fi
+    fi
 fi
 
 cat <<EOF
 
 ────────────────────────────────────────────────────────────────
- Gotowe. Aplikacja działa pod adresem: https://$DOMAIN
+ Gotowe. Aplikacja działa pod adresem: $BASE_URL
 ────────────────────────────────────────────────────────────────
 
  Przydatne komendy:
@@ -228,7 +364,7 @@ cat <<EOF
    sudo bash $APP_DIR/deploy/update.sh   wdrożenie nowej wersji
 
  Pierwsze kroki:
-   1. Otwórz https://$DOMAIN i kliknij ikonę kłódki w prawym górnym rogu.
+   1. Otwórz $BASE_URL i kliknij ikonę kłódki w prawym górnym rogu.
    2. Zaloguj się hasłem startowym — aplikacja od razu poprosi o zmianę.
    3. Przekaż pozostałym osobom ich hasła startowe.
 
@@ -239,6 +375,8 @@ cat <<EOF
      echo 'FCM_SERVICE_ACCOUNT=/etc/gezet/fcm.json' | sudo tee -a $ENV_FILE
      sudo systemctl restart gezet-marketing
    Bez tego powiadomienia idą przekaźnikiem Expo. Sprawdzenie:
-     curl -s https://$DOMAIN/api/health
+     curl -s $BASE_URL/api/health
+
+ W aplikacji mobilnej wpisz jako adres serwera: $BASE_URL
 
 EOF

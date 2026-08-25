@@ -78,6 +78,19 @@ describe('klient API', () => {
     await expect(api.getMeta()).rejects.toMatchObject({ code: 'network' });
   });
 
+  it('adres bez szyfrowania tłumaczy, że to Android blokuje połączenie', async () => {
+    // Android blokuje cleartext po cichu — zwykły komunikat o braku sieci
+    // kierowałby szukanie problemu w zupełnie złą stronę.
+    await setBaseUrl('http://203.0.113.10');
+    global.fetch.mockRejectedValue(new TypeError('Network request failed'));
+    await expect(api.getMeta()).rejects.toThrow(/Android blokuje/);
+  });
+
+  it('sam adres IP jest uzupełniany do https', async () => {
+    await setBaseUrl('203.0.113.10');
+    expect(getBaseUrl()).toBe('https://203.0.113.10/api');
+  });
+
   it('zapisany adres serwera jest używany przy kolejnych żądaniach', async () => {
     await setBaseUrl('marketing.firma.pl');
     expect(getBaseUrl()).toBe('https://marketing.firma.pl/api');

@@ -97,7 +97,11 @@ export default function SettingsScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
-          hint={value ? `Połączenie z: ${normalizeUrl(value)}` : 'Adres, pod którym otwierasz panel w przeglądarce.'}
+          hint={
+            value
+              ? `Połączenie z: ${normalizeUrl(value)}`
+              : 'Adres, pod którym otwierasz panel w przeglądarce — nazwa domeny albo adres IP.'
+          }
         />
         <Banner message={message} tone={messageTone} />
         <Banner message={metaError} tone="crit" />

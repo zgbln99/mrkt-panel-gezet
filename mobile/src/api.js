@@ -85,12 +85,20 @@ async function request(path, { method = 'GET', body, auth = false, timeoutMs = 1
       signal: controller.signal,
     });
   } catch (err) {
-    throw new ApiError(
-      err.name === 'AbortError'
-        ? 'Serwer nie odpowiedział na czas. Sprawdź połączenie.'
-        : 'Brak połączenia z serwerem. Sprawdź sieć i adres w Ustawieniach.',
-      { code: 'network' }
-    );
+    let message;
+    if (err.name === 'AbortError') {
+      message = 'Serwer nie odpowiedział na czas. Sprawdź połączenie.';
+    } else if (baseUrl.startsWith('http://')) {
+      // Android od wersji 9 blokuje nieszyfrowane połączenia i robi to po cichu
+      // — bez tego komunikatu użytkownik widziałby zwykły błąd sieci i szukałby
+      // problemu w zasięgu albo w adresie.
+      message =
+        'Android blokuje połączenia bez szyfrowania. Adres serwera musi zaczynać się od https:// ' +
+        '— poproś administratora o włączenie certyfikatu.';
+    } else {
+      message = 'Brak połączenia z serwerem. Sprawdź sieć i adres w Ustawieniach.';
+    }
+    throw new ApiError(message, { code: 'network' });
   } finally {
     clearTimeout(timer);
   }

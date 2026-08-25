@@ -51,7 +51,11 @@ export default function SetupScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
-          hint={value ? `Aplikacja połączy się z: ${normalizeUrl(value)}` : 'Można wpisać sam adres, bez https://'}
+          hint={
+            value
+              ? `Aplikacja połączy się z: ${normalizeUrl(value)}`
+              : 'Można wpisać samą nazwę albo adres IP serwera — resztę aplikacja uzupełni.'
+          }
         />
         <Banner message={error || metaError} tone="crit" />
         <Button title="Połącz" variant="primary" onPress={save} busy={busy} />
