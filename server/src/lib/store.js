@@ -98,8 +98,25 @@ const insertNotification = db.prepare(
   'INSERT INTO notifications (id, user_id, text, read, at, request_id, task_id) VALUES (?, ?, ?, 0, ?, ?, ?)'
 );
 
-function pushNotification({ userId, text, requestId, taskId }) {
+function pushNotification({ userId, text, requestId, taskId, title }) {
   insertNotification.run(newId(), userId, text, new Date().toISOString(), requestId || null, taskId || null);
+
+  // setImmediate, a nie await: ta funkcja bywa wywoływana wewnątrz synchronicznej
+  // transakcji better-sqlite3, więc zapytanie HTTP musi poczekać, aż transakcja
+  // się zatwierdzi. Ładujemy moduł leniwie, żeby uniknąć cyklu zależności.
+  setImmediate(() => {
+    try {
+      require('./push')
+        .sendToUser(userId, {
+          title: title || 'Zgłoszenia Marketing',
+          body: text,
+          data: { requestId: requestId || null, taskId: taskId || null },
+        })
+        .catch((err) => console.error('[push]', err.message));
+    } catch (err) {
+      console.error('[push] nie udało się zainicjować wysyłki:', err.message);
+    }
+  });
 }
 
 module.exports = {

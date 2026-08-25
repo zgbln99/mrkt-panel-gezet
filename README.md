@@ -16,6 +16,7 @@ osobom razem z gotowym szkicem posta, wpisu na blog albo scenariusza rolki.
 2. [Uruchomienie lokalne](#2-uruchomienie-lokalne)
 3. [Wdrożenie na VPS](#3-wdrożenie-na-vps)
 4. [Codzienna obsługa](#4-codzienna-obsługa)
+4a. [Aplikacja mobilna (Android)](#4a-aplikacja-mobilna-android)
 5. [Bezpieczeństwo](#5-bezpieczeństwo)
 6. [Struktura API](#6-struktura-api)
 7. [Co zmieniła wersja 2.0](#7-co-zmieniła-wersja-20)
@@ -29,6 +30,7 @@ osobom razem z gotowym szkicem posta, wpisu na blog albo scenariusza rolki.
 | Backend | Node.js 18+ · Express 4 · SQLite (`better-sqlite3`) |
 | Uwierzytelnianie | JWT + bcrypt (koszt 12) |
 | Frontend | React 18 · Vite 5 |
+| Aplikacja mobilna | React Native 0.86 · Expo SDK 57 (Android) |
 | Wdrożenie | Docker Compose **albo** systemd + nginx |
 
 ```
@@ -45,6 +47,7 @@ gezet-marketing/
 ├── client/            aplikacja React (Vite)
 │   ├── public/fonts/  czcionki hostowane lokalnie
 │   └── src/
+├── mobile/            aplikacja Android (React Native + Expo)
 ├── deploy/            nginx, systemd, PM2, skrypty instalacyjne
 ├── Dockerfile
 └── docker-compose.yml
@@ -266,6 +269,33 @@ Uprawnienia administratora ustawia stała `ADMIN_IDS` w `server/scripts/seed.js`
 
 ---
 
+## 4a. Aplikacja mobilna (Android)
+
+W katalogu `mobile/` leży natywna aplikacja Android (React Native + Expo)
+korzystająca z tego samego backendu. Ma pełny zakres funkcji panelu oraz
+powiadomienia push — czego przeglądarka na telefonie nie zapewni przy
+zamkniętej karcie.
+
+```bash
+cd mobile
+npm install
+npx expo start          # podgląd w aplikacji Expo Go
+npm test                # 24 testy
+```
+
+Zbudowanie pliku APK do rozdania zespołowi:
+
+```bash
+npm install -g eas-cli && eas login && eas init
+eas build --platform android --profile preview
+```
+
+Szczegóły (adres serwera, konfiguracja pushy, build lokalny) —
+[`mobile/README.md`](mobile/README.md).
+
+Powiadomienia push wymagają po stronie serwera jedynie `PUSH_ENABLED=true`
+(domyślnie włączone); klucze FCM konfiguruje się raz w EAS.
+
 ## 5. Bezpieczeństwo
 
 Formularz jest wystawiony publicznie, a panel zawiera dane handlowe całej firmy —
@@ -334,6 +364,8 @@ poniżej to, co aplikacja robi, żeby jedno nie stało się drogą do drugiego.
 | POST | `/api/auth/change-password` | zalogowany | zmiana własnego hasła |
 | GET | `/api/users` | admin | lista kont zespołu |
 | POST | `/api/users/:id/reset-password` | admin | reset hasła (opcjonalnie losowego) |
+| POST | `/api/push/register` | zalogowany | rejestracja urządzenia mobilnego do powiadomień |
+| POST | `/api/push/unregister` | zalogowany | wyrejestrowanie urządzenia (wylogowanie na telefonie) |
 
 ---
 

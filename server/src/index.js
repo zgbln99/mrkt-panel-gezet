@@ -15,6 +15,7 @@ const tasksRoutes = require('./routes/tasks.routes');
 const notificationsRoutes = require('./routes/notifications.routes');
 const metaRoutes = require('./routes/meta.routes');
 const usersRoutes = require('./routes/users.routes');
+const pushRoutes = require('./routes/push.routes');
 
 const pkg = require('../package.json');
 
@@ -143,6 +144,7 @@ app.use('/api/tasks', tasksRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/meta', metaRoutes);
 app.use('/api/users', usersRoutes);
+app.use('/api/push', pushRoutes);
 
 // Nieznana ścieżka pod /api to błąd API — musi wrócić JSON-em, nie stroną
 // HTML z frontendu (inaczej klient próbuje sparsować HTML jako odpowiedź).

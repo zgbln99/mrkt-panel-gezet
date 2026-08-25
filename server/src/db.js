@@ -129,4 +129,18 @@ if (backfillNeeded) {
   console.log(`[db] migracja: przeniesiono przypisania ${rows.length} zadań do tabeli task_assignees`);
 }
 
+// Tokeny urządzeń mobilnych (Expo push). Jedna osoba może mieć kilka urządzeń,
+// a jedno urządzenie po przelogowaniu należy do kogoś innego — dlatego kluczem
+// jest token, a user_id jest zwykłą kolumną nadpisywaną przy rejestracji.
+db.exec(`
+CREATE TABLE IF NOT EXISTS push_tokens (
+  token TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  platform TEXT,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_push_tokens_user ON push_tokens(user_id);
+`);
+
 module.exports = db;

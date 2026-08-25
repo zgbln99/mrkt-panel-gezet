@@ -66,6 +66,10 @@ const config = {
   // Ile zgłoszeń zwraca panel w jednym zapytaniu (panel odpytuje cyklicznie).
   requestsPageSize: intFromEnv('REQUESTS_PAGE_SIZE', 200),
   logRequests: process.env.LOG_REQUESTS !== 'false',
+  // Powiadomienia push na telefony (aplikacja mobilna). Wyłączenie nie psuje
+  // niczego innego — powiadomienia w aplikacji działają niezależnie.
+  pushEnabled: process.env.PUSH_ENABLED !== 'false',
+  pushEndpoint: process.env.PUSH_ENDPOINT || 'https://exp.host/--/api/v2/push/send',
 };
 
 if (config.bcryptRounds < 10 || config.bcryptRounds > 15) {

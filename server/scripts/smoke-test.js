@@ -24,6 +24,7 @@ process.env.CLIENT_ORIGIN = '';
 process.env.BCRYPT_ROUNDS = '10'; // szybciej w teście; produkcja używa 12
 process.env.LOG_REQUESTS = 'false';
 process.env.TRUST_PROXY = '0';
+process.env.PUSH_ENABLED = 'false'; // test nie wychodzi do internetu
 
 const BASE = `http://127.0.0.1:${process.env.PORT}`;
 
@@ -239,6 +240,34 @@ async function main() {
   });
   check('nowe hasło z resetu działa', reloginAfterReset.status === 200);
   check('konto po resecie znów wymaga zmiany hasła', reloginAfterReset.data.user.mustChangePassword === true);
+
+  console.log('\n· Powiadomienia push (rejestracja urządzenia)');
+  const badToken = await call('POST', '/api/push/register', { token: piotrChanged.data.token, body: { token: 'nie-token' } });
+  check('nieprawidłowy token urządzenia odrzucony (400)', badToken.status === 400);
+
+  const pushAnon = await call('POST', '/api/push/register', { body: { token: 'ExpoPushToken[abc]' } });
+  check('rejestracja tokenu wymaga zalogowania (401)', pushAnon.status === 401);
+
+  const pushReg = await call('POST', '/api/push/register', {
+    token: piotrChanged.data.token,
+    body: { token: 'ExpoPushToken[smoke-test-device]', platform: 'android' },
+  });
+  check('rejestracja tokenu urządzenia działa', pushReg.status === 200);
+  check('token zapisany przy właściwym koncie',
+    db.prepare('SELECT user_id FROM push_tokens WHERE token = ?').get('ExpoPushToken[smoke-test-device]').user_id === 'piotr');
+
+  const pushReReg = await call('POST', '/api/push/register', {
+    token: piotrChanged.data.token,
+    body: { token: 'ExpoPushToken[smoke-test-device]', platform: 'android' },
+  });
+  check('ponowna rejestracja nie duplikuje wpisu',
+    pushReReg.status === 200 && db.prepare('SELECT COUNT(*) AS n FROM push_tokens').get().n === 1);
+
+  const pushOut = await call('POST', '/api/push/unregister', {
+    token: piotrChanged.data.token,
+    body: { token: 'ExpoPushToken[smoke-test-device]' },
+  });
+  check('wyrejestrowanie usuwa token', pushOut.status === 200 && db.prepare('SELECT COUNT(*) AS n FROM push_tokens').get().n === 0);
 
   console.log('\n· Usuwanie zgłoszeń');
   const requestId = adminView.data.requests[0].id;

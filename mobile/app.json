@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "Zgłoszenia Marketing",
+    "slug": "gezet-marketing",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "gezet",
+    "userInterfaceStyle": "automatic",
+    "primaryColor": "#2B6777",
+    "assetBundlePatterns": ["**/*"],
+    "android": {
+      "package": "pl.grupagezet.marketing",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#2B6777",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "edgeToEdgeEnabled": true,
+      "permissions": ["android.permission.POST_NOTIFICATIONS"],
+      "blockedPermissions": ["android.permission.RECORD_AUDIO"]
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "pl.grupagezet.marketing"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#F0F2ED",
+          "dark": { "backgroundColor": "#10151A" }
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/android-icon-monochrome.png",
+          "color": "#2B6777",
+          "defaultChannel": "default"
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "extra": {
+      "_comment": "apiUrl to adres domyślny — użytkownik może go nadpisać w Ustawieniach aplikacji. Pusty oznacza, że aplikacja zapyta o adres przy pierwszym uruchomieniu.",
+      "apiUrl": "",
+      "eas": {
+        "projectId": ""
+      }
+    }
+  }
+}
