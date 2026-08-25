@@ -1,0 +1,58 @@
+import React, { useState, useMemo } from 'react';
+import TaskCard from './TaskCard.jsx';
+
+export default function EmployeePanel({ meta, requests, currentUser, onUpdateStatus, onTransfer, showToast }) {
+  const [statusFilter, setStatusFilter] = useState('all');
+
+  const myCards = useMemo(() => {
+    const list = [];
+    requests.forEach((req) => req.tasks.forEach((task) => {
+      if (task.assignees.includes(currentUser.id)) list.push({ req, task });
+    }));
+    return list
+      .filter(({ task }) => statusFilter === 'all' || task.status === statusFilter)
+      .sort((a, b) => (b.req.createdAt || '').localeCompare(a.req.createdAt || ''));
+  }, [requests, currentUser, statusFilter]);
+
+  const stats = useMemo(() => {
+    let newC = 0, progC = 0, doneC = 0;
+    requests.forEach((req) => req.tasks.forEach((task) => {
+      if (!task.assignees.includes(currentUser.id)) return;
+      if (task.status === 'new') newC++;
+      else if (task.status === 'progress') progC++;
+      else doneC++;
+    }));
+    return { newC, progC, doneC, total: newC + progC + doneC };
+  }, [requests, currentUser]);
+
+  return (
+    <div className="view active">
+      <div className="stats">
+        <div className="stat accent"><div className="n">{stats.total}</div><div className="l">Moje zadania łącznie</div></div>
+        <div className="stat warn"><div className="n">{stats.newC}</div><div className="l">Nowe</div></div>
+        <div className="stat"><div className="n" style={{ color: 'var(--accent)' }}>{stats.progC}</div><div className="l">W trakcie</div></div>
+        <div className="stat ok"><div className="n">{stats.doneC}</div><div className="l">Zrobione</div></div>
+      </div>
+
+      <div className="controls">
+        <button className="chip status-new" aria-pressed={statusFilter === 'new'} onClick={() => setStatusFilter('new')}>Nowe</button>
+        <button className="chip status-progress" aria-pressed={statusFilter === 'progress'} onClick={() => setStatusFilter('progress')}>W trakcie</button>
+        <button className="chip status-done" aria-pressed={statusFilter === 'done'} onClick={() => setStatusFilter('done')}>Zrobione</button>
+        <button className="chip" aria-pressed={statusFilter === 'all'} onClick={() => setStatusFilter('all')}>Wszystkie</button>
+      </div>
+
+      {myCards.length === 0 && (
+        <div className="card" style={{ textAlign: 'center', color: 'var(--ink-faint)' }}>
+          Brak zadań przypisanych do Ciebie{statusFilter !== 'all' ? ' w tym filtrze' : ''}.
+        </div>
+      )}
+
+      <div className="board" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+        {myCards.map(({ req, task }) => (
+          <TaskCard key={req.id + task.id} meta={meta} req={req} task={task} mode="employee" currentUser={currentUser}
+            onUpdateStatus={onUpdateStatus} onTransfer={onTransfer} showToast={showToast} />
+        ))}
+      </div>
+    </div>
+  );
+}
