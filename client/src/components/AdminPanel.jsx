@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Trash2 } from 'lucide-react';
 import TaskCard from './TaskCard.jsx';
+import TaskDetailModal from './TaskDetailModal.jsx';
 import AccountsManager from './AccountsManager.jsx';
 import { bm, formatDateTime } from '../utils.js';
 
@@ -19,6 +20,23 @@ export default function AdminPanel({
 }) {
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [openTaskId, setOpenTaskId] = useState(null);
+
+  // Trzymamy identyfikator, a nie kopię zadania: dane odświeżają się co 15 s,
+  // więc otwarte okno pokazuje bieżący stan, a nie zdjęcie sprzed odświeżenia.
+  const openEntry = useMemo(() => {
+    if (!openTaskId) return null;
+    for (const req of requests) {
+      const task = req.tasks.find((t) => t.id === openTaskId);
+      if (task) return { req, task };
+    }
+    return null;
+  }, [openTaskId, requests]);
+
+  // Zadanie mogło zniknąć (usunięte zgłoszenie, przekazane komuś innemu).
+  useEffect(() => {
+    if (openTaskId && !openEntry) setOpenTaskId(null);
+  }, [openTaskId, openEntry]);
 
   const stats = useMemo(() => {
     let openTasks = 0;
@@ -158,18 +176,7 @@ export default function AdminPanel({
               </div>
               {cards.length === 0 && <div className="empty-col">Brak zadań</div>}
               {cards.map(({ req, task }) => (
-                <TaskCard
-                  key={task.id}
-                  meta={meta}
-                  req={req}
-                  task={task}
-                  mode="admin"
-                  currentUser={currentUser}
-                  onUpdateStatus={onUpdateStatus}
-                  onUpdateAssignees={onUpdateAssignees}
-                  onTransfer={onTransfer}
-                  showToast={showToast}
-                />
+                <TaskCard key={task.id} meta={meta} req={req} task={task} onOpen={() => setOpenTaskId(task.id)} />
               ))}
             </div>
           );
@@ -239,6 +246,21 @@ export default function AdminPanel({
       </details>
 
       <AccountsManager showToast={showToast} minLength={meta.passwordMinLength || 10} />
+
+      {openEntry && (
+        <TaskDetailModal
+          meta={meta}
+          req={openEntry.req}
+          task={openEntry.task}
+          mode="admin"
+          currentUser={currentUser}
+          onClose={() => setOpenTaskId(null)}
+          onUpdateStatus={onUpdateStatus}
+          onUpdateAssignees={onUpdateAssignees}
+          onTransfer={onTransfer}
+          showToast={showToast}
+        />
+      )}
     </div>
   );
 }

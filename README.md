@@ -366,6 +366,10 @@ od wdrożenia produkcyjnego.
   kasowane po 30 dniach.
 
 **Interfejs**
+- Kafelki zadań zwinięte do tytułu, kontekstu zgłoszenia i znaczników; pełna
+  treść (opis, kontekst, gotowy szkic, historia przekazań, akcje) otwiera się
+  w oknie szczegółów. Wcześniej każdy kafelek rozwijał wszystko w kolumnie
+  i tablica ciągnęła się na kilka tysięcy pikseli.
 - Wygaśnięcie sesji wylogowuje z komunikatem, zamiast po cichu zostawiać otwarty
   panel z nieaktualnymi danymi.
 - Okna modalne obsługują Escape, przenoszenie i uwięzienie fokusu; formularze są
