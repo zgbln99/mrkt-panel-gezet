@@ -34,12 +34,22 @@ PUBLIC_V6="$(tr -d '[:space:]' <<< "$PUBLIC_V6")"
 IPV6_PUBLIC=0
 if [[ "$GLOBAL_V6" =~ ^[23] ]]; then IPV6_PUBLIC=1; fi
 
+GATEWAY_V4="$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')"
+GATEWAY_V6="$(ip -6 route 2>/dev/null | awk '/^default/{print $3; exit}')"
+IFACE="$(ip route 2>/dev/null | awk '/^default/{print $5; exit}')"
+
 echo
 bold "Adresy tego serwera"
 echo "  na interfejsie (IPv4): ${PRIVATE_V4:-brak}"
 echo "  na interfejsie (IPv6): ${GLOBAL_V6:-brak}"
 echo "  widziany z internetu (IPv4): ${PUBLIC_V4:-nie udało się ustalić}"
 echo "  widziany z internetu (IPv6): ${PUBLIC_V6:-brak łączności IPv6}"
+echo
+
+echo
+bold "Kto pośredniczy w ruchu"
+echo "  brama domyślna (IPv4): ${GATEWAY_V4:-brak}   interfejs: ${IFACE:-?}"
+echo "  brama domyślna (IPv6): ${GATEWAY_V6:-brak}"
 echo
 
 BEHIND_NAT=0
@@ -62,9 +72,18 @@ if [[ $BEHIND_NAT -eq 1 ]]; then
         warn "adres od operatora albo tunel (np. Cloudflare Tunnel)."
     fi
     echo
-    bold "Na routerze przekieruj (port forwarding):"
-    echo "  80/TCP   →  $PRIVATE_V4:80"
-    echo "  443/TCP  →  $PRIVATE_V4:443"
+    bold "Przekierowanie portów trzeba ustawić NIE tutaj, tylko na urządzeniu"
+    bold "o adresie ${GATEWAY_V4:-<brama domyślna>} — to ono ma adres publiczny $PUBLIC_V4."
+    echo "  Ma przekazywać:  80/TCP → $PRIVATE_V4:80   i   443/TCP → $PRIVATE_V4:443"
+    echo
+    echo "  Czym jest ta brama, zależy od tego, jak postawiono serwer:"
+    echo "    • host wirtualizacji (Proxmox/libvirt) → reguła iptables DNAT na hoście"
+    echo "    • osobna maszyna-brama w tej sieci     → konfiguracja na niej"
+    echo "    • fizyczny router                      → panel routera"
+    echo
+    echo "  Nie masz do niej dostępu? Zostają dwie drogi bez przekierowania portów:"
+    echo "    • wyłącznie IPv6 (rekord AAAA) — działa od ręki, ale klienci bez IPv6 nie wejdą"
+    echo "    • tunel (np. Cloudflare Tunnel) — połączenie wychodzi z serwera, działa dla wszystkich"
 else
     ok "Serwer ma publiczny adres IPv4 — przekierowanie portów niepotrzebne."
 fi
