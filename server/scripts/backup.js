@@ -15,9 +15,12 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../src/db');
-const config = require('../src/config');
 
-const targetDir = path.resolve(process.argv[2] || path.join(path.dirname(config.dbPath), '..', 'backups'));
+// Domyślny katalog liczony od katalogu aplikacji, a nie od położenia bazy:
+// dzięki temu `npm run backup` bez argumentu trafia tam, gdzie kopie kładzie
+// timer systemd (<katalog-aplikacji>/backups) — niezależnie od tego, gdzie
+// DB_PATH wskazuje plik bazy.
+const targetDir = path.resolve(process.argv[2] || path.join(__dirname, '..', '..', 'backups'));
 const keepDays = Number.parseInt(process.env.BACKUP_KEEP_DAYS || '30', 10);
 
 fs.mkdirSync(targetDir, { recursive: true });

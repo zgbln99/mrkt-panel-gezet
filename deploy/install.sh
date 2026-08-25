@@ -61,7 +61,9 @@ fi
 
 # ── 3. pliki aplikacji ─────────────────────────────────────────────────
 info "Kopiuję pliki do $APP_DIR"
-mkdir -p "$APP_DIR" "$APP_DIR/backups" /var/log/gezet-marketing
+# Katalog bazy musi istnieć PRZED startem usługi: ProtectSystem=strict czyni
+# /var/www tylko do odczytu, więc aplikacja nie utworzyłaby go sama.
+mkdir -p "$APP_DIR" "$APP_DIR/server/data" "$APP_DIR/backups" /var/log/gezet-marketing
 
 if [[ "$(readlink -f "$SOURCE_DIR")" != "$(readlink -f "$APP_DIR")" ]]; then
     # --exclude .env i data/: konfiguracja i baza na serwerze są ważniejsze
@@ -122,9 +124,16 @@ fi
 
 # ── 7. usługi systemd ──────────────────────────────────────────────────
 info "Konfiguruję usługę systemd"
-install -m 644 "$APP_DIR/deploy/gezet-marketing.service" /etc/systemd/system/
-install -m 644 "$APP_DIR/deploy/gezet-backup.service"    /etc/systemd/system/
-install -m 644 "$APP_DIR/deploy/gezet-backup.timer"      /etc/systemd/system/
+NODE_BIN="$(command -v node)"
+echo "  node: $NODE_BIN"
+# Jednostki mają w repozytorium /usr/bin/node; podmieniamy na ścieżkę wykrytą
+# w systemie, żeby instalacja z nvm albo z innego repozytorium też wstała.
+for unit in gezet-marketing.service gezet-backup.service; do
+    sed "s|^ExecStart=/usr/bin/node|ExecStart=$NODE_BIN|" "$APP_DIR/deploy/$unit" \
+        > "/etc/systemd/system/$unit"
+    chmod 644 "/etc/systemd/system/$unit"
+done
+install -m 644 "$APP_DIR/deploy/gezet-backup.timer" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now gezet-marketing
 systemctl enable --now gezet-backup.timer

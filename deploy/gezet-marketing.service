@@ -21,6 +21,8 @@ User=gezet
 Group=gezet
 WorkingDirectory=/var/www/gezet-marketing/server
 EnvironmentFile=/var/www/gezet-marketing/server/.env
+# Ścieżkę do node podmienia deploy/install.sh na tę wykrytą w systemie —
+# przy instalacji z nvm albo z innego repozytorium node nie leży w /usr/bin.
 ExecStart=/usr/bin/node src/index.js
 
 Restart=always
@@ -41,7 +43,9 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/www/gezet-marketing/server/data /var/www/gezet-marketing/backups
+# Prefiks "-" oznacza "pomiń, jeśli katalogu nie ma" — bez niego brakujący
+# katalog kopii zapasowych blokowałby start całej usługi.
+ReadWritePaths=-/var/www/gezet-marketing/server/data -/var/www/gezet-marketing/backups
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

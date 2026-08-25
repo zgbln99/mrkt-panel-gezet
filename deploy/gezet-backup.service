@@ -15,4 +15,5 @@ Group=gezet
 WorkingDirectory=/var/www/gezet-marketing/server
 EnvironmentFile=/var/www/gezet-marketing/server/.env
 Environment=BACKUP_KEEP_DAYS=30
+# Ścieżkę do node podmienia deploy/install.sh (patrz gezet-marketing.service).
 ExecStart=/usr/bin/node scripts/backup.js /var/www/gezet-marketing/backups

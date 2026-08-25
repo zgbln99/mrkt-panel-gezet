@@ -164,9 +164,11 @@ if (fs.existsSync(path.join(clientDist, 'index.html'))) {
   app.use(
     express.static(clientDist, {
       index: false,
-      maxAge: '1y',
       setHeaders(res, filePath) {
-        if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader(
+          'Cache-Control',
+          filePath.endsWith('index.html') ? 'no-cache' : 'public, max-age=31536000, immutable'
+        );
       },
     })
   );
