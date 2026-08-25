@@ -40,8 +40,19 @@ npm ci --no-audit --no-fund
 npm run build
 rm -rf node_modules
 
-chown -R "$APP_USER:$APP_USER" "$APP_DIR"
-chmod 600 "$APP_DIR/server/.env"
+# Kod aplikacji zostaje własnością roota — konto usługi ma go wyłącznie czytać.
+# Zapisywalne jest tylko to, co aplikacja naprawdę zapisuje: baza i kopie
+# zapasowe. Dzięki temu przejęty proces aplikacji nie nadpisze własnego kodu
+# ani nie podłoży hooka w .git/hooks, który wykonałby się z prawami roota
+# przy najbliższym `git pull` w update.sh.
+# Skutek uboczny: katalog repozytorium należy do roota, więc git nie zgłasza
+# przy nim ostrzeżenia "detected dubious ownership".
+chown -R root:root "$APP_DIR"
+chown -R "$APP_USER:$APP_USER" "$APP_DIR/server/data" "$APP_DIR/backups" /var/log/gezet-marketing
+
+# .env czyta konto usługi (przez grupę), ale nie może go zmienić.
+chown root:"$APP_USER" "$APP_DIR/server/.env"
+chmod 640 "$APP_DIR/server/.env"
 
 info "Restartuję usługę"
 systemctl restart gezet-marketing

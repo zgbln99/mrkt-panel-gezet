@@ -127,8 +127,19 @@ npm run build
 # devDependencies frontendu (Vite) są potrzebne wyłącznie do builda.
 rm -rf node_modules
 
-chown -R "$APP_USER:$APP_USER" "$APP_DIR" /var/log/gezet-marketing
-chmod 600 "$ENV_FILE"
+# Kod aplikacji zostaje własnością roota — konto usługi ma go wyłącznie czytać.
+# Zapisywalne jest tylko to, co aplikacja naprawdę zapisuje: baza i kopie
+# zapasowe. Dzięki temu przejęty proces aplikacji nie nadpisze własnego kodu
+# ani nie podłoży hooka w .git/hooks, który wykonałby się z prawami roota
+# przy najbliższym `git pull` w update.sh.
+# Skutek uboczny: katalog repozytorium należy do roota, więc git nie zgłasza
+# przy nim ostrzeżenia "detected dubious ownership".
+chown -R root:root "$APP_DIR"
+chown -R "$APP_USER:$APP_USER" "$APP_DIR/server/data" "$APP_DIR/backups" /var/log/gezet-marketing
+
+# .env czyta konto usługi (przez grupę), ale nie może go zmienić.
+chown root:"$APP_USER" "$ENV_FILE"
+chmod 640 "$ENV_FILE"
 
 # ── 6. konta zespołu ───────────────────────────────────────────────────
 DB_FILE="$APP_DIR/server/data/gezet.db"

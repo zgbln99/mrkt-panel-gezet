@@ -329,6 +329,17 @@ cel proxy i nie trzeba mu podawać ścieżki do plików statycznych.
 sudo bash /var/www/gezet-marketing/deploy/update.sh
 ```
 
+> **Instalacje sprzed tej zmiany uprawnień** mają cały katalog przypisany do
+> konta usługi, przez co `git pull` jako root kończy się komunikatem
+> *„detected dubious ownership"*. Jednorazowo:
+>
+> ```bash
+> sudo git config --global --add safe.directory /var/www/gezet-marketing
+> ```
+>
+> Najbliższe uruchomienie `install.sh` albo `update.sh` poprawi układ własności
+> i komunikat zniknie na dobre.
+
 Skrypt robi kopię zapasową, pobiera zmiany, przebudowuje frontend, restartuje
 usługę i sprawdza, czy aplikacja wstała. W Dockerze:
 `docker compose up -d --build`.
@@ -483,6 +494,13 @@ poniżej to, co aplikacja robi, żeby jedno nie stało się drogą do drugiego.
 - CORS domyślnie wyłączony — przy wdrożeniu za nginx-em frontend i API dzielą
   domenę, więc żądania cross-origin nie są w ogóle potrzebne.
 - Backend nasłuchuje na `127.0.0.1`; port 4000 nie jest wystawiony do internetu.
+- Kod aplikacji należy do roota — konto usługi `gezet` tylko go czyta. Zapis ma
+  wyłącznie tam, gdzie aplikacja naprawdę pisze: `server/data/` i `backups/`.
+  Przejęty proces aplikacji nie nadpisze więc własnego kodu ani nie podłoży
+  hooka w `.git/hooks`, który wykonałby się z prawami roota przy najbliższym
+  `git pull` podczas aktualizacji.
+- `server/.env` (z sekretem JWT i kluczem Firebase) jest czytelny dla konta
+  usługi przez grupę, ale niezapisywalny: `root:gezet`, tryb `640`.
 - nginx odrzuca żądania z nazwą hosta inną niż skonfigurowana domena (wejścia po
   samym adresie IP, skanery, cudze domeny wskazujące na serwer). Bez tego panel
   byłby dostępny po adresie IP przez zwykłe HTTP — czyli z hasłem lecącym
