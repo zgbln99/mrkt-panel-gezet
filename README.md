@@ -186,6 +186,18 @@ Dwie rzeczy potrafią to uniemożliwić — warto sprawdzić je zawczasu:
 - **Zmienny adres publiczny.** Na łączach bez stałego IP rekord A przestanie
   pasować po każdej zmianie. Wtedy potrzebny jest DDNS.
 
+**IPv6 to osobna sprawa niż NAT na IPv4.** Serwer schowany za NAT-em może mieć
+jednocześnie w pełni publiczny, routowany adres IPv6 — wtedy działa po IPv6 bez
+żadnego przekierowania portów. Rekord **AAAA** zakładaj jednak dopiero po
+uruchomieniu wszystkiego na IPv4: Let's Encrypt przy istniejącym rekordzie AAAA
+próbuje walidacji **najpierw po IPv6** i jeśli ruch przychodzący po IPv6 nie
+dochodzi, certyfikat nie powstanie — mimo poprawnie działającego IPv4.
+
+**Jeden rekord A, nie kilka.** Jeżeli domena wskazywała wcześniej na hosting
+u rejestratora, podmień istniejący rekord zamiast dodawać kolejny. Przy dwóch
+adresach ruch rozkłada się między nie: część osób trafi w stary serwer,
+a walidacja certyfikatu będzie się udawać losowo.
+
 ### Kilka aplikacji na jednym serwerze
 
 nginx obsługuje wiele aplikacji naraz — rozdziela je po nazwie domeny. Ta

@@ -404,7 +404,10 @@ $PUBLIC_IP"
         warn "Załóż w DNS takie rekordy dla $DOMAIN:"
         warn "    A     $DOMAIN   →  $target"
         if [[ -n "$SERVER_IPV6" ]]; then
-            warn "    AAAA  $DOMAIN   →  $SERVER_IPV6     (opcjonalnie)"
+            warn "    AAAA  $DOMAIN   →  $SERVER_IPV6     (opcjonalnie, patrz niżej)"
+            warn "  Rekord AAAA dodawaj dopiero po uruchomieniu wszystkiego na IPv4:"
+            warn "  Let's Encrypt przy istniejącym AAAA waliduje najpierw po IPv6 i gdy"
+            warn "  ruch przychodzący po IPv6 nie dochodzi, certyfikat nie powstanie."
         else
             warn "    (bez rekordu AAAA — ten serwer nie ma globalnego IPv6)"
         fi
