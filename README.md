@@ -194,6 +194,22 @@ Numer portu bywa blokowany przez restrykcyjne firewalle firmowe, więc warto to
 sprawdzić z sieci, z której zespół faktycznie korzysta, zanim rozda się adres
 wszystkim.
 
+#### Dlaczego nie Cloudflare dla samej subdomeny
+
+Naturalny pomysł — „przekieruję na Cloudflare tylko `mrkt.gezet.pl`, a reszty
+domeny nie ruszam" — na darmowym planie nie działa:
+
+| Sposób | Co daje | Plan |
+|---|---|---|
+| Pełne przeniesienie domeny | serwery nazw całego `gezet.pl` u Cloudflare | każdy, także darmowy |
+| Subdomain setup | subdomena jako osobna strefa (delegacja NS) | **tylko Enterprise** |
+| CNAME setup (partial) | pojedyncze nazwy bez przenoszenia strefy | **Business lub Enterprise** |
+
+Czyli albo cała domena idzie na serwery nazw Cloudflare, albo nic. Gdyby jednak
+przeniesienie całego `gezet.pl` wchodziło w grę, Cloudflare rozwiązuje sprawę
+w całości: przyjmuje ruch po IPv4 i przekazuje go do serwera po IPv6, więc
+adres bez portu działa wtedy w każdej sieci.
+
 #### Adres bez numeru portu — wariant wyłącznie IPv6
 
 Numer portu w adresie da się pominąć, ale tylko po IPv6 — na współdzielonym
@@ -217,7 +233,22 @@ curl -6 https://ifconfig.me      # adres = IPv6 jest, błąd = nie ma
 
 Polskie sieci komórkowe zwykle mają IPv6; biurowe łącza i sieci firmowe bywają
 wyłącznie na IPv4. Jeśli choć część zespołu jest bez IPv6, wariant z portem jest
-jedynym, który obsłuży wszystkich.
+jedynym, który obsłuży wszystkich — na tym hostingu.
+
+#### Podsumowanie: czysty adres dla wszystkich
+
+Na hostingu ze współdzielonym IPv4 nie da się mieć jednocześnie adresu bez portu
+i dostępności dla sieci bez IPv6. Trzeba wybrać:
+
+| Wariant | Adres | Kto wejdzie | Koszt |
+|---|---|---|---|
+| Port na przydzielonym numerze | `https://domena:30145` | wszyscy | bez zmian |
+| Wyłącznie IPv6 | `https://domena` | tylko z IPv6 | bez zmian |
+| Cała domena na Cloudflare | `https://domena` | wszyscy | darmowy plan, ale przenosi całą strefę |
+| VPS z własnym IPv4 | `https://domena` | wszyscy | ok. 4 €/mies. |
+
+Ostatni wariant nie wymaga żadnych zmian w aplikacji — instalator w trybie
+domenowym obsługuje go od początku.
 
 ### Serwer za NAT-em (adres prywatny)
 
