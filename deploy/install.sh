@@ -163,9 +163,28 @@ NGINX_SITE=/etc/nginx/sites-available/gezet-marketing
 ACME_ROOT=/var/www/letsencrypt
 mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
 
+# Adresy tego serwera — potrzebne i do sprawdzenia DNS, i do podpowiedzi,
+# jakie rekordy założyć.
+SERVER_IPV4="$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{sub(/\/.*/,"",$2); print $2; exit}')"
+SERVER_IPV6="$(ip -6 addr show scope global 2>/dev/null | awk '/inet6 /{sub(/\/.*/,"",$2); print $2; exit}')"
+
 if [[ "$MODE" == "domain" ]]; then
     info "Konfiguruję nginx dla domeny $DOMAIN"
     sed "s/TWOJA-DOMENA.PL/$DOMAIN/g" "$APP_DIR/deploy/nginx.conf" > "$NGINX_SITE"
+
+    # Nasłuch IPv6 jest w szablonie zakomentowany, bo na serwerze bez IPv6
+    # wywala nginx-a przy starcie. Skoro ten serwer IPv6 ma — włączamy go.
+    # Inaczej rekord AAAA założony odruchowo obok A kierowałby część urządzeń
+    # (te wolące IPv6) na port, którego nikt nie słucha.
+    if [[ -n "$SERVER_IPV6" ]]; then
+        echo "  wykryto IPv6 ($SERVER_IPV6) — włączam nasłuch IPv6"
+        sed -i \
+            -e 's|^    # listen \[::\]:80 default_server;|    listen [::]:80 default_server;|' \
+            -e 's|^    # listen \[::\]:80;|    listen [::]:80;|' \
+            "$NGINX_SITE"
+    else
+        echo "  brak globalnego IPv6 — nie zakładaj rekordu AAAA dla tej domeny"
+    fi
 else
     info "Konfiguruję nginx dla adresu $DOMAIN (bez domeny)"
     # Wariant przejściowy: sam HTTP. Docelowa konfiguracja z TLS wymaga
@@ -327,15 +346,25 @@ else
     domain_points_here
     DNS_CHECK=$?
 
+    dns_records_hint() {
+        warn "Załóż w DNS takie rekordy dla $DOMAIN:"
+        warn "    A     $DOMAIN   →  $SERVER_IPV4"
+        if [[ -n "$SERVER_IPV6" ]]; then
+            warn "    AAAA  $DOMAIN   →  $SERVER_IPV6     (opcjonalnie)"
+        else
+            warn "    (bez rekordu AAAA — ten serwer nie ma globalnego IPv6)"
+        fi
+        warn "Po propagacji uruchom: sudo certbot --nginx -d $DOMAIN"
+        warn "Jeśli domena stoi za Cloudflare, na czas wystawiania certyfikatu wyłącz proxy (szara chmurka)."
+    }
+
     if [[ $DNS_CHECK -eq 1 ]]; then
         warn "Domena $DOMAIN wskazuje na inny adres niż ten serwer — pomijam certyfikat."
-        warn "Popraw rekord A w DNS (wskaż na: $(hostname -I | awk '{print $1}')), odczekaj na propagację i uruchom:"
-        warn "  sudo certbot --nginx -d $DOMAIN"
-        warn "Jeśli używasz Cloudflare, na czas wystawiania certyfikatu wyłącz proxy (szara chmurka)."
+        dns_records_hint
         BASE_URL="http://$DOMAIN"
     elif [[ $DNS_CHECK -eq 2 ]]; then
         warn "Domena $DOMAIN nie ma jeszcze rekordu A — pomijam certyfikat."
-        warn "Po dodaniu rekordu uruchom: sudo certbot --nginx -d $DOMAIN"
+        dns_records_hint
         BASE_URL="http://$DOMAIN"
     else
         info "Konfiguruję certyfikat HTTPS (Let's Encrypt)"

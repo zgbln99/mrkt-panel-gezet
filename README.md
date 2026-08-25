@@ -109,10 +109,29 @@ dostęp `sudo` i domenę wskazującą rekordem A na adres IP serwera.
 
 ### Droga A — jeden skrypt (zalecana)
 
-**Zanim zaczniesz:** dodaj w DNS rekord **A** dla swojej domeny wskazujący na
-adres IP serwera i odczekaj na propagację. Bez tego Let's Encrypt nie wystawi
-certyfikatu — skrypt sprawdza to sam i pominie ten krok z czytelnym
-komunikatem, zamiast zużywać limit prób.
+**Zanim zaczniesz — rekordy DNS.** Adres serwera odczytasz na nim samym:
+
+```bash
+ip -4 addr show scope global | awk '/inet /{sub(/\/.*/,"",$2); print $2}'   # IPv4
+ip -6 addr show scope global | awk '/inet6 /{sub(/\/.*/,"",$2); print $2}'  # IPv6 (jeśli jest)
+```
+
+Załóż rekord **A** dla subdomeny wskazujący na ten adres IPv4 i odczekaj na
+propagację (TTL warto na start ustawić nisko, np. 300 s):
+
+```
+A     panel.twojafirma.pl   →   203.0.113.10
+```
+
+**Rekord AAAA zakładaj tylko wtedy, gdy serwer ma globalne IPv6** — skrypt
+wykrywa to sam i włącza wtedy nasłuch IPv6 w nginx. Rekord AAAA bez tego
+nasłuchu kieruje część urządzeń (te wolące IPv6) na port, którego nikt nie
+słucha: dla nich strona po prostu się nie otworzy, a z komputera testującego
+po IPv4 wszystko wygląda dobrze.
+
+Bez poprawnego DNS Let's Encrypt nie wystawi certyfikatu — skrypt sprawdza to
+sam i pominie ten krok z czytelnym komunikatem (wypisując, jakie rekordy
+założyć), zamiast zużywać limit prób.
 
 ```bash
 # na serwerze — WSTAW WŁASNĄ DOMENĘ zamiast panel.twojafirma.pl
