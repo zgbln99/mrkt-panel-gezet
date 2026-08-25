@@ -49,10 +49,6 @@ else
     fi
 fi
 
-# Trzeci tryb: hosting, który nie daje portów 80 i 443 na IPv4, tylko kilka
-# własnych portów na adresie współdzielonym (tak działa m.in. Mikr.us).
-# Aplikacja stoi wtedy na przydzielonym porcie, a certyfikat wydaje się przez
-# walidację po IPv6, gdzie port 80 należy już do nas.
 detect_shared_hosting_port() {
     # Numery portów bywają wypisane w powitaniu po zalogowaniu.
     grep -hoE '[a-z0-9.-]+\.mikrus\.xyz:[0-9]+' \
@@ -60,7 +56,23 @@ detect_shared_hosting_port() {
         | grep -oE '[0-9]+$' | sort -un | tail -1
 }
 
-if [[ "$MODE" == "domain" && "${IPV6_ONLY:-0}" == "1" ]]; then
+# Trzeci tryb: hosting, który nie daje portów 80 i 443 na IPv4, tylko kilka
+# własnych portów na adresie współdzielonym (tak działa m.in. Mikr.us).
+# Aplikacja stoi wtedy na przydzielonym porcie, a certyfikat wydaje się przez
+# walidację po IPv6, gdzie port 80 należy już do nas.
+
+if [[ "${NO_TLS:-0}" == "1" ]]; then
+    # Dostęp tymczasowy — zanim stanie certyfikat. Aplikacja odpowiada po
+    # zwykłym HTTP na przydzielonym porcie i przyjmuje każdą nazwę hosta,
+    # żeby dało się wejść zarówno po adresie IP, jak i po nazwie hostingu.
+    if [[ -z "${HTTPS_PORT:-}" ]]; then
+        HTTPS_PORT="$(detect_shared_hosting_port || true)"
+    fi
+    [[ -n "${HTTPS_PORT:-}" ]] || die "Tryb NO_TLS wymaga podania portu: NO_TLS=1 HTTPS_PORT=30145 bash deploy/install.sh <adres>"
+    [[ "$HTTPS_PORT" =~ ^[0-9]+$ ]] && (( HTTPS_PORT > 0 && HTTPS_PORT < 65536 )) \
+        || die "HTTPS_PORT=\"$HTTPS_PORT\" nie jest poprawnym numerem portu."
+    MODE="http"
+elif [[ "$MODE" == "domain" && "${IPV6_ONLY:-0}" == "1" ]]; then
     # Adres bez numeru portu na hostingu bez własnego IPv4 jest możliwy
     # wyłącznie po IPv6 — świadomy wybór, bo sieci bez IPv6 nie zobaczą wtedy
     # aplikacji w ogóle.
@@ -79,6 +91,8 @@ fi
 
 if [[ "$MODE" == "port" ]]; then
     BASE_URL="https://$DOMAIN:$HTTPS_PORT"
+elif [[ "$MODE" == "http" ]]; then
+    BASE_URL="http://$DOMAIN:$HTTPS_PORT"
 else
     BASE_URL="https://$DOMAIN"
 fi
@@ -148,6 +162,21 @@ EOF
     chmod 600 "$ENV_FILE"
 fi
 
+# Plik .env raz utworzony zostaje nietknięty, ale zgoda na brak szyfrowania
+# musi odpowiadać trybowi, w jakim akurat instalujemy — inaczej zostałaby
+# włączona na zawsze po pierwszym uruchomieniu tymczasowym.
+set_env_flag() {
+    local key="$1" value="$2"
+    sed -i "/^${key}=/d" "$ENV_FILE"
+    [[ -n "$value" ]] && printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+}
+
+if [[ "$MODE" == "http" ]]; then
+    set_env_flag ALLOW_INSECURE_HTTP true
+else
+    set_env_flag ALLOW_INSECURE_HTTP ""
+fi
+
 # ── 5. zależności i build ──────────────────────────────────────────────
 info "Instaluję zależności backendu"
 cd "$APP_DIR/server"
@@ -212,7 +241,29 @@ mkdir -p "$ACME_ROOT/.well-known/acme-challenge"
 SERVER_IPV4="$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{sub(/\/.*/,"",$2); print $2; exit}')"
 SERVER_IPV6="$(ip -6 addr show scope global 2>/dev/null | awk '/inet6 /{sub(/\/.*/,"",$2); print $2; exit}')"
 
-if [[ "$MODE" == "ipv6" ]]; then
+if [[ "$MODE" == "http" ]]; then
+    info "Konfiguruję nginx na porcie $HTTPS_PORT (bez szyfrowania — dostęp tymczasowy)"
+    # server_name _ i default_server: wejście ma działać zarówno po adresie IP,
+    # jak i po dowolnej nazwie hosta wskazującej na ten serwer.
+    cat > "$NGINX_SITE" <<NGINXCONF
+server {
+    listen 0.0.0.0:$HTTPS_PORT default_server;
+    listen [::]:$HTTPS_PORT default_server;
+    server_name _;
+    server_tokens off;
+    client_max_body_size 512k;
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              \$host;
+        proxy_set_header X-Real-IP         \$remote_addr;
+        proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINXCONF
+elif [[ "$MODE" == "ipv6" ]]; then
     info "Konfiguruję nginx dla $DOMAIN (wyłącznie IPv6)"
     cat > "$NGINX_SITE" <<NGINXCONF
 server {
@@ -324,7 +375,7 @@ if command -v ufw >/dev/null 2>&1; then
     ufw allow 'Nginx Full' >/dev/null
     # W trybie portowym aplikacja słucha na przydzielonym porcie, a nie na 443 —
     # bez tej reguły ufw odciąłby ją zaraz po włączeniu.
-    [[ "$MODE" == "port" ]] && ufw allow "$HTTPS_PORT/tcp" >/dev/null
+    [[ "$MODE" == "port" || "$MODE" == "http" ]] && ufw allow "$HTTPS_PORT/tcp" >/dev/null
     ufw --force enable >/dev/null
     echo "  Port 4000 pozostaje zamknięty dla świata — API jest dostępne wyłącznie przez nginx."
 else
@@ -345,7 +396,13 @@ curl -fsS http://127.0.0.1:4000/api/health >/dev/null 2>&1 \
 
 # ── 11. HTTPS ──────────────────────────────────────────────────────────
 
-if [[ "$MODE" == "ipv6" || "$MODE" == "port" ]]; then
+if [[ "$MODE" == "http" ]]; then
+    warn "Tryb tymczasowy: aplikacja działa BEZ SZYFROWANIA."
+    warn "Hasła i dane logowania jadą otwartym tekstem — używajcie tego adresu"
+    warn "wyłącznie do wstępnej konfiguracji, najlepiej z sieci firmowej."
+    warn "Po uruchomieniu HTTPS zmieńcie wszystkie hasła ustawione w tym trybie."
+
+elif [[ "$MODE" == "ipv6" || "$MODE" == "port" ]]; then
     info "Konfiguruję certyfikat HTTPS dla $DOMAIN"
 
     if [[ "$MODE" == "ipv6" ]]; then
@@ -598,6 +655,8 @@ cat <<EOF
 ────────────────────────────────────────────────────────────────
  Gotowe. Aplikacja działa pod adresem: $BASE_URL
 ────────────────────────────────────────────────────────────────
+$( [[ "$MODE" == "http" ]] && printf '%s\n' " !!  POŁĄCZENIE NIESZYFROWANE — hasła jadą otwartym tekstem." \
+   "     To konfiguracja tymczasowa. Po uruchomieniu HTTPS zmieńcie hasła." "" )
 
  Przydatne komendy:
    systemctl status gezet-marketing      stan usługi

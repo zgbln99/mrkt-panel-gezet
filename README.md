@@ -194,6 +194,29 @@ Numer portu bywa blokowany przez restrykcyjne firewalle firmowe, więc warto to
 sprawdzić z sieci, z której zespół faktycznie korzysta, zanim rozda się adres
 wszystkim.
 
+#### Dostęp tymczasowy, zanim stanie HTTPS
+
+Żeby wejść do panelu i skonfigurować konta, zanim domena i certyfikat będą
+gotowe:
+
+```bash
+sudo NO_TLS=1 HTTPS_PORT=30145 bash deploy/install.sh 37.27.117.117
+```
+
+Aplikacja odpowiada wtedy po zwykłym HTTP na przydzielonym porcie i przyjmuje
+każdą nazwę hosta, więc wejdziesz zarówno po adresie IP, jak i po dowolnej
+nazwie wskazującej na ten serwer.
+
+Ten tryb ustawia w `.env` opcję `ALLOW_INSECURE_HTTP=true`, która wyłącza HSTS
+i dyrektywę CSP `upgrade-insecure-requests`. Bez tego przeglądarka próbowałaby
+pobrać pliki aplikacji po HTTPS, którego pod tym adresem nie ma — i pokazałaby
+**pustą stronę**. Kolejne uruchomienie skryptu w trybie z certyfikatem samo
+usuwa tę opcję z `.env`.
+
+> **Hasła jadą wtedy otwartym tekstem.** To konfiguracja na chwilę, do wstępnego
+> ustawienia kont — najlepiej z sieci firmowej. Po uruchomieniu HTTPS zmień
+> wszystkie hasła ustawione w tym trybie.
+
 #### Jak własne domeny podpina się do takiego hostingu
 
 Dokumentacja Mikr.usa zna dokładnie jedną drogę na własną domenę pod

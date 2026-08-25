@@ -45,13 +45,17 @@ app.use(
         frameAncestors: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
-        upgradeInsecureRequests: config.isProduction ? [] : null,
+        upgradeInsecureRequests: config.isProduction && !config.allowInsecureHttp ? [] : null,
       },
     },
     // Aplikacja bywa otwierana pod adresem IP przed konfiguracją HTTPS —
     // HSTS włączamy dopiero na produkcji, gdzie certyfikat już działa.
-    hsts: config.isProduction ? { maxAge: 15552000, includeSubDomains: true } : false,
+    hsts: config.isProduction && !config.allowInsecureHttp ? { maxAge: 15552000, includeSubDomains: true } : false,
     crossOriginEmbedderPolicy: false,
+    // Bez szyfrowania przeglądarka i tak ignoruje tę politykę, wypisując przy
+    // tym ostrzeżenie w konsoli przy każdym wejściu — niepotrzebny szum akurat
+    // wtedy, gdy ktoś zagląda do konsoli w poszukiwaniu problemu.
+    crossOriginOpenerPolicy: config.allowInsecureHttp ? false : undefined,
     referrerPolicy: { policy: 'same-origin' },
   })
 );
@@ -219,6 +223,10 @@ const server = app.listen(config.port, config.host, () => {
       `(tryb: ${config.nodeEnv}, baza: ${config.dbPath})`
   );
   console.log(`Powiadomienia push: ${push.transportName()}`);
+  if (config.allowInsecureHttp) {
+    console.warn('UWAGA: ALLOW_INSECURE_HTTP=true — aplikacja może być serwowana bez szyfrowania.');
+    console.warn('       Hasła jadą wtedy otwartym tekstem. Ustaw certyfikat i wyłącz tę opcję.');
+  }
   if (fcm.getLoadError()) {
     console.warn(`Uwaga: ${fcm.getLoadError()} — powiadomienia pójdą przez przekaźnik Expo.`);
   }
