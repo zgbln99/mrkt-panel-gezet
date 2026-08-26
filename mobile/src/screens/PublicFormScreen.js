@@ -22,6 +22,7 @@ const EMPTY = {
   triggers: [],
   materials: [],
   materialsOther: '',
+  photoVideoScope: 'both',
   listingLink: '',
   eventName: '',
   eventDate: '',
@@ -150,6 +151,17 @@ export default function PublicFormScreen() {
           onToggle={() => toggle('triggers', trigger.id)}
         />
       ))}
+
+      {form.triggers.includes('photo_video_only') ? (
+        <Card style={{ marginTop: 8 }}>
+          <Choice
+            label="Zakres — czego dokładnie potrzebujesz?"
+            value={form.photoVideoScope}
+            onChange={(v) => set('photoVideoScope', v)}
+            options={(meta.photoVideoScopes || []).map((scope) => ({ value: scope.id, label: scope.label }))}
+          />
+        </Card>
+      ) : null}
 
       {form.triggers.includes('listing_promo') ? (
         <Card style={{ marginTop: 8 }}>

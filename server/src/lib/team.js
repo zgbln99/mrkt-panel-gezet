@@ -14,7 +14,17 @@ const TRIGGERS = [
   { id: 'test_drives', t: 'Za mało jazd testowych', d: 'kampania leadowa, Google Moja Firma z CTA' },
   { id: 'listing_promo', t: 'Promocja konkretnego ogłoszenia', d: 'wklej link — reklama social + GMF' },
   { id: 'event', t: 'Udział w evencie', d: 'flagi, oklejenie/ulotki, gadżety, social' },
+  { id: 'photo_video_only', t: 'Tylko foto / video', d: 'sama sesja zdjęciowa lub materiał video — bez kampanii i publikacji' },
   { id: 'materials_only', t: 'Tylko materiały / inna potrzeba', d: 'zaznacz materiały poniżej albo opisz w uwagach' },
+];
+
+// Zakres zgłoszenia „tylko foto / video”. Bez tego wyboru zaznaczenie jednej
+// opcji tworzyłoby zawsze dwa zadania — także dla osoby, która potrzebuje
+// wyłącznie zdjęć albo wyłącznie filmu.
+const PHOTO_VIDEO_SCOPES = [
+  { id: 'both', label: 'Foto i video' },
+  { id: 'foto', label: 'Tylko foto' },
+  { id: 'video', label: 'Tylko video' },
 ];
 
 const MATERIALS = [
@@ -38,4 +48,4 @@ const TEAM = [
   { id: 'karolina', name: 'Karolina Lisowska-Kycia', role: 'Dyrektor Marketingu' },
 ];
 
-module.exports = { CATS, TRIGGERS, MATERIALS, TEAM };
+module.exports = { CATS, TRIGGERS, MATERIALS, PHOTO_VIDEO_SCOPES, TEAM };

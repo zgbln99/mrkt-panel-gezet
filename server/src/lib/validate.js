@@ -27,6 +27,12 @@ function idList(value, allowed, maxItems = 32) {
   return out;
 }
 
+/** Wartość ze znanego zbioru; wszystko inne (także brak) staje się `fallback`. */
+function oneOf(value, allowed, fallback = '') {
+  const raw = str(value, 64);
+  return allowed.has(raw) ? raw : fallback;
+}
+
 /**
  * Adres URL bezpieczny do wstawienia w atrybut href.
  *
@@ -64,4 +70,4 @@ function isoDate(value) {
   return raw;
 }
 
-module.exports = { str, idList, safeUrl, isoDate };
+module.exports = { str, idList, oneOf, safeUrl, isoDate };

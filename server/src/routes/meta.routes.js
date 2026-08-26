@@ -1,5 +1,5 @@
 const express = require('express');
-const { TEAM, CATS, TRIGGERS, MATERIALS } = require('../lib/team');
+const { TEAM, CATS, TRIGGERS, MATERIALS, PHOTO_VIDEO_SCOPES } = require('../lib/team');
 const { MIN_PASSWORD_LENGTH } = require('../auth');
 
 const router = express.Router();
@@ -10,6 +10,7 @@ const payload = JSON.stringify({
   cats: CATS,
   triggers: TRIGGERS,
   materials: MATERIALS,
+  photoVideoScopes: PHOTO_VIDEO_SCOPES,
   passwordMinLength: MIN_PASSWORD_LENGTH,
 });
 

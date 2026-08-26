@@ -34,6 +34,11 @@ export default function TaskDetailModal({
   const others = meta.team.filter((t) => t.id !== currentUser.id);
   const brandModelLabel = bm(req);
   const listingHref = safeHref(req.listingLink);
+  // Zakres ma sens tylko przy zgłoszeniu „tylko foto / video” — przy pozostałych
+  // typach niósłby wartość domyślną, która niczego nie mówi.
+  const photoVideoScope = (req.triggers || []).includes('photo_video_only')
+    ? (meta.photoVideoScopes || []).find((s) => s.id === (req.photoVideoScope || 'both'))
+    : null;
 
   const setStatus = async (status) => {
     if (busy || task.status === status) return;
@@ -135,6 +140,12 @@ export default function TaskDetailModal({
               <>
                 <dt>Marka / model</dt>
                 <dd>{brandModelLabel}</dd>
+              </>
+            )}
+            {photoVideoScope && (
+              <>
+                <dt>Zakres</dt>
+                <dd>{photoVideoScope.label}</dd>
               </>
             )}
             <dt>Wpłynęło</dt>

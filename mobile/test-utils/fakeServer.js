@@ -53,6 +53,7 @@ export function createFakeServer(options = {}) {
     triggers: ['new_model'],
     materials: [],
     materialsOther: '',
+    photoVideoScope: 'both',
     listingLink: '',
     eventName: '',
     eventDate: '',
@@ -69,8 +70,16 @@ export function createFakeServer(options = {}) {
       { id: 'digital', label: 'Kampanie digital' },
       { id: 'video', label: 'Video' },
     ],
-    triggers: [{ id: 'new_model', t: 'Nowy model / nowość w ofercie', d: 'social, blog, foto, reels' }],
+    triggers: [
+      { id: 'new_model', t: 'Nowy model / nowość w ofercie', d: 'social, blog, foto, reels' },
+      { id: 'photo_video_only', t: 'Tylko foto / video', d: 'sama sesja zdjęciowa lub materiał video' },
+    ],
     materials: [{ id: 'flags', label: 'Flagi' }],
+    photoVideoScopes: [
+      { id: 'both', label: 'Foto i video' },
+      { id: 'foto', label: 'Tylko foto' },
+      { id: 'video', label: 'Tylko video' },
+    ],
     passwordMinLength: 10,
   };
 

@@ -93,6 +93,10 @@ addColumn('users', 'must_change_password', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'created_at', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'last_login_at', 'TEXT');
 addColumn('tasks', 'updated_at', 'TEXT');
+// photo_video_scope — zgłoszenie „tylko foto / video” niesie własny zakres
+// (foto, video albo oba); starsze rekordy nie mają tego typu zgłoszenia,
+// więc wartość domyślna jest dla nich obojętna.
+addColumn('requests', 'photo_video_scope', "TEXT NOT NULL DEFAULT 'both'");
 
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_requests_created ON requests(created_at DESC);

@@ -3,15 +3,17 @@ const db = require('../db');
 const config = require('../config');
 const { requireAuth, requireAdmin, blockUntilPasswordChanged } = require('../middleware/auth');
 const { buildTasks, bm } = require('../lib/tasksBuilder');
-const { TEAM, TRIGGERS, MATERIALS } = require('../lib/team');
-const { str, idList, safeUrl, isoDate } = require('../lib/validate');
+const { TEAM, CATS, TRIGGERS, MATERIALS, PHOTO_VIDEO_SCOPES } = require('../lib/team');
+const { str, idList, oneOf, safeUrl, isoDate } = require('../lib/validate');
 const store = require('../lib/store');
 
 const router = express.Router();
 
 const TEAM_IDS = new Set(TEAM.map((t) => t.id));
+const CAT_IDS = new Set(CATS.map((c) => c.id));
 const TRIGGER_IDS = new Set(TRIGGERS.map((t) => t.id));
 const MATERIAL_IDS = new Set(MATERIALS.map((m) => m.id));
+const SCOPE_IDS = new Set(PHOTO_VIDEO_SCOPES.map((s) => s.id));
 
 const DEPARTMENTS = new Set([
   'Sprzedaż / Handlowy',
@@ -23,9 +25,11 @@ const DEPARTMENTS = new Set([
 
 const insertRequest = db.prepare(`
   INSERT INTO requests (id, created_at, seen, name, department, location, brand, model, campaign_period,
-                        triggers, materials, materials_other, listing_link, event_name, event_date, notes)
-  VALUES (@id, @createdAt, 0, @name, @department, @location, @brand, @model, @campaignPeriod,
-          @triggers, @materials, @materialsOther, @listingLink, @eventName, @eventDate, @notes)
+                        triggers, materials, materials_other, photo_video_scope,
+                        listing_link, event_name, event_date, notes)
+  VALUES (@id, @createdAt, @seen, @name, @department, @location, @brand, @model, @campaignPeriod,
+          @triggers, @materials, @materialsOther, @photoVideoScope,
+          @listingLink, @eventName, @eventDate, @notes)
 `);
 
 const insertTask = db.prepare(`
@@ -41,68 +45,117 @@ function knownUserIds() {
   return new Set(selectKnownUserIds.all().map((u) => u.id));
 }
 
-/* --------------------------- publiczny formularz --------------------------- */
+/* ------------------------- wspólna obsługa zgłoszeń ------------------------- */
 
-// POST /api/requests — dostępny bez logowania (formularz dla handlowców).
-router.post('/', (req, res) => {
-  const body = req.body || {};
-
+/**
+ * Sprowadza treść żądania do bezpiecznego zgłoszenia.
+ *
+ * Ten sam zestaw pól przyjmuje publiczny formularz i panel administratora —
+ * limity długości oraz białe listy identyfikatorów muszą być identyczne,
+ * dlatego żyją w jednym miejscu, a nie w dwóch kopiach obok siebie.
+ *
+ * Zwraca `{ payload }` albo `{ error }` z komunikatem dla użytkownika.
+ */
+function readRequestPayload(body) {
   const name = str(body.name, 120);
-  if (!name) return res.status(400).json({ error: 'Podaj imię i nazwisko.' });
-
-  const triggers = idList(body.triggers, TRIGGER_IDS, TRIGGERS.length);
-  const materials = idList(body.materials, MATERIAL_IDS, MATERIALS.length);
-  const materialsOther = str(body.materialsOther, 200);
-
-  if (triggers.length === 0 && materials.length === 0 && !materialsOther) {
-    return res.status(400).json({ error: 'Zaznacz przynajmniej jeden typ zgłoszenia albo materiał.' });
-  }
+  if (!name) return { error: 'Podaj imię i nazwisko.' };
 
   const department = str(body.department, 60);
   const listingLinkRaw = str(body.listingLink, 500);
   const listingLink = safeUrl(listingLinkRaw);
   if (listingLinkRaw && !listingLink) {
-    return res.status(400).json({ error: 'Link do ogłoszenia musi być poprawnym adresem http:// lub https://.' });
+    return { error: 'Link do ogłoszenia musi być poprawnym adresem http:// lub https://.' };
   }
 
-  const payload = {
-    name,
-    department: DEPARTMENTS.has(department) ? department : 'Inny dział',
-    location: str(body.location, 80),
-    brand: str(body.brand, 60),
-    model: str(body.model, 60),
-    campaignPeriod: str(body.campaignPeriod, 80),
-    triggers,
-    materials,
-    materialsOther,
-    listingLink,
-    eventName: str(body.eventName, 120),
-    eventDate: isoDate(body.eventDate),
-    notes: str(body.notes, 4000),
+  return {
+    payload: {
+      name,
+      department: DEPARTMENTS.has(department) ? department : 'Inny dział',
+      location: str(body.location, 80),
+      brand: str(body.brand, 60),
+      model: str(body.model, 60),
+      campaignPeriod: str(body.campaignPeriod, 80),
+      triggers: idList(body.triggers, TRIGGER_IDS, TRIGGERS.length),
+      materials: idList(body.materials, MATERIAL_IDS, MATERIALS.length),
+      materialsOther: str(body.materialsOther, 200),
+      photoVideoScope: oneOf(body.photoVideoScope, SCOPE_IDS, 'both'),
+      listingLink,
+      eventName: str(body.eventName, 120),
+      eventDate: isoDate(body.eventDate),
+      notes: str(body.notes, 4000),
+    },
   };
+}
 
-  const adminIds = selectAdminIds.all().map((u) => u.id);
-  const tasks = buildTasks(payload, { fallbackAssignees: adminIds });
+/** Czy ze zgłoszenia da się cokolwiek wygenerować (typ zlecenia albo materiał). */
+function hasContent(payload) {
+  return payload.triggers.length > 0 || payload.materials.length > 0 || !!payload.materialsOther;
+}
+
+/**
+ * Zadania dopisane ręcznie w panelu administratora — poza tym, co wynika
+ * z typu zlecenia. Każde musi mieć tytuł, znaną kategorię i wykonawcę,
+ * inaczej wpadłoby do tablicy jako kafelek bez adresata.
+ */
+function readCustomTasks(value) {
+  if (value === undefined || value === null) return { tasks: [] };
+  if (!Array.isArray(value)) return { error: 'Nieprawidłowa lista zadań.' };
+  if (value.length > 20) return { error: 'Za dużo zadań naraz — maksymalnie 20.' };
+
+  const tasks = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') return { error: 'Nieprawidłowe zadanie.' };
+    const title = str(item.title, 200);
+    if (!title) return { error: 'Każde zadanie musi mieć tytuł.' };
+    const category = oneOf(item.category, CAT_IDS);
+    if (!category) return { error: `Wybierz kategorię dla zadania „${title}”.` };
+    const assignees = idList(item.assignees, TEAM_IDS, TEAM.length);
+    if (assignees.length === 0) {
+      return { error: `Zadanie „${title}” musi mieć przynajmniej jedną osobę odpowiedzialną.` };
+    }
+    tasks.push({
+      id: store.newId(),
+      category,
+      title,
+      details: str(item.details, 2000),
+      assignees,
+      status: 'new',
+      draftText: '',
+      transferLog: [],
+    });
+  }
+  return { tasks };
+}
+
+/**
+ * Zapisuje zgłoszenie razem z zadaniami i powiadomieniami.
+ *
+ * Wszystko w jednej transakcji: albo zapisujemy komplet, albo nic — bez stanów
+ * pośrednich w bazie. `seen` odróżnia zgłoszenie z formularza (czeka na
+ * przeczytanie) od zlecenia wpisanego w panelu, a `skipNotifyUserId` chroni
+ * administratora przed powiadomieniem o własnym wpisie.
+ */
+function saveRequest(payload, tasks, { adminIds, seen = false, skipNotifyUserId = null } = {}) {
   const known = knownUserIds();
-
   const id = store.newId();
   const createdAt = new Date().toISOString();
+  const { name } = payload;
 
-  // Wszystko w jednej transakcji: albo zapisujemy zgłoszenie razem z zadaniami
-  // i powiadomieniami, albo nic — bez stanów pośrednich w bazie.
   const save = db.transaction(() => {
     insertRequest.run({
       id,
       createdAt,
+      seen: seen ? 1 : 0,
       name: payload.name,
       department: payload.department,
       location: payload.location,
       brand: payload.brand,
       model: payload.model,
       campaignPeriod: payload.campaignPeriod,
-      triggers: JSON.stringify(triggers),
-      materials: JSON.stringify(materials),
+      triggers: JSON.stringify(payload.triggers),
+      materials: JSON.stringify(payload.materials),
       materialsOther: payload.materialsOther,
+      photoVideoScope: payload.photoVideoScope,
       listingLink: payload.listingLink,
       eventName: payload.eventName,
       eventDate: payload.eventDate,
@@ -124,6 +177,7 @@ router.post('/', (req, res) => {
 
     const brandModelLabel = bm(payload);
     const notified = new Set();
+    if (skipNotifyUserId) notified.add(skipNotifyUserId);
 
     for (const task of tasks) {
       for (const assignee of task.assignees) {
@@ -160,11 +214,67 @@ router.post('/', (req, res) => {
   });
 
   save();
+  return id;
+}
 
-  res.status(201).json({
+function tasksResponse(id, tasks) {
+  return {
     requestId: id,
     tasks: tasks.map((t) => ({ id: t.id, title: t.title, category: t.category, assignees: t.assignees })),
-  });
+  };
+}
+
+/* --------------------------- publiczny formularz --------------------------- */
+
+// POST /api/requests — dostępny bez logowania (formularz dla handlowców).
+router.post('/', (req, res) => {
+  const parsed = readRequestPayload(req.body || {});
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+  const payload = parsed.payload;
+  if (!hasContent(payload)) {
+    return res.status(400).json({ error: 'Zaznacz przynajmniej jeden typ zgłoszenia albo materiał.' });
+  }
+
+  const adminIds = selectAdminIds.all().map((u) => u.id);
+  const tasks = buildTasks(payload, { fallbackAssignees: adminIds });
+  const id = saveRequest(payload, tasks, { adminIds });
+
+  res.status(201).json(tasksResponse(id, tasks));
+});
+
+/* --------------------- zlecenie wpisane w panelu admina --------------------- */
+
+// POST /api/requests/manual — administrator dodaje zlecenie z panelu: wybiera
+// typ zlecenia z tej samej listy co formularz publiczny (zadania powstają
+// automatycznie) i/lub dopisuje własne zadania z kategorią i wykonawcą.
+//
+// Zgłoszenie od razu jest oznaczone jako przeczytane — administrator właśnie je
+// wpisał, więc nie ma czego „zauważać” na liście nieprzeczytanych.
+router.post('/manual', requireAuth, blockUntilPasswordChanged, requireAdmin, (req, res) => {
+  const body = req.body || {};
+  // Pole „zlecający” bywa puste, gdy zadanie wychodzi od samego marketingu —
+  // wtedy podpisujemy je kontem, które je utworzyło.
+  const parsed = readRequestPayload({ ...body, name: str(body.name, 120) || req.user.name });
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+  const custom = readCustomTasks(body.customTasks);
+  if (custom.error) return res.status(400).json({ error: custom.error });
+
+  const payload = parsed.payload;
+  if (!hasContent(payload) && custom.tasks.length === 0) {
+    return res.status(400).json({ error: 'Wybierz typ zlecenia albo dopisz własne zadanie.' });
+  }
+
+  const adminIds = selectAdminIds.all().map((u) => u.id);
+  const generated = hasContent(payload)
+    ? buildTasks(payload, { fallbackAssignees: adminIds, allowFallback: custom.tasks.length === 0 })
+    : [];
+  const tasks = [...generated, ...custom.tasks];
+
+  const id = saveRequest(payload, tasks, { adminIds, seen: true, skipNotifyUserId: req.user.id });
+
+  res.status(201).json(tasksResponse(id, tasks));
 });
 
 /* ------------------------------- panel zespołu ------------------------------- */

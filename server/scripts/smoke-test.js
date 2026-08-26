@@ -382,6 +382,98 @@ async function main() {
   const toUnregistered = pushMessages.find((m) => m.to === 'ExpoPushToken[smoke-device-1]');
   check('urządzenie wyrejestrowane nie dostaje powiadomień', !toUnregistered);
 
+  console.log('\n· Zgłoszenie „tylko foto / video”');
+  const photoOnly = await call('POST', '/api/requests', {
+    body: { name: 'Jan Kowalski', triggers: ['photo_video_only'], photoVideoScope: 'foto', brand: 'Kia' },
+  });
+  check('zgłoszenie „tylko foto” zapisane (201)', photoOnly.status === 201, JSON.stringify(photoOnly.data));
+  check('„tylko foto” tworzy wyłącznie zadanie foto',
+    photoOnly.data.tasks.length === 1 && photoOnly.data.tasks[0].category === 'foto',
+    JSON.stringify(photoOnly.data.tasks.map((t) => t.category)));
+
+  const photoVideo = await call('POST', '/api/requests', {
+    body: { name: 'Jan Kowalski', triggers: ['photo_video_only'], brand: 'Kia' },
+  });
+  check('domyślny zakres tworzy zadanie foto i video',
+    photoVideo.data.tasks.length === 2 &&
+      photoVideo.data.tasks.some((t) => t.category === 'foto') &&
+      photoVideo.data.tasks.some((t) => t.category === 'video'),
+    JSON.stringify(photoVideo.data.tasks.map((t) => t.category)));
+  check('zgłoszenie „tylko foto / video” nie generuje zadań digital',
+    photoVideo.data.tasks.every((t) => t.category !== 'digital'));
+
+  const badScope = await call('POST', '/api/requests', {
+    body: { name: 'Jan Kowalski', triggers: ['photo_video_only'], photoVideoScope: '__nieznany__' },
+  });
+  check('nieznany zakres wraca do wartości domyślnej', badScope.data.tasks.length === 2,
+    JSON.stringify(badScope.data.tasks.map((t) => t.category)));
+
+  console.log('\n· Zlecenie dodane z panelu administratora');
+  const manualAnon = await call('POST', '/api/requests/manual', { body: { name: 'X', triggers: ['new_model'] } });
+  check('dodawanie zadań z panelu wymaga zalogowania (401)', manualAnon.status === 401);
+
+  const manualForbidden = await call('POST', '/api/requests/manual', {
+    token: piotrChanged.data.token,
+    body: { name: 'Piotr', triggers: ['new_model'] },
+  });
+  check('pracownik nie doda zlecenia z panelu (403)', manualForbidden.status === 403);
+
+  const manualEmpty = await call('POST', '/api/requests/manual', { token: adminToken, body: { name: 'Karolina' } });
+  check('zlecenie bez typu i bez własnych zadań odrzucone (400)', manualEmpty.status === 400);
+
+  const manualNoAssignee = await call('POST', '/api/requests/manual', {
+    token: adminToken,
+    body: { name: 'Karolina', customTasks: [{ category: 'foto', title: 'Sesja', assignees: [] }] },
+  });
+  check('własne zadanie bez wykonawcy odrzucone (400)', manualNoAssignee.status === 400);
+
+  const manualBadCategory = await call('POST', '/api/requests/manual', {
+    token: adminToken,
+    body: { name: 'Karolina', customTasks: [{ category: 'nie-ma-takiej', title: 'Sesja', assignees: ['piotr'] }] },
+  });
+  check('własne zadanie z nieznaną kategorią odrzucone (400)', manualBadCategory.status === 400);
+
+  const manual = await call('POST', '/api/requests/manual', {
+    token: adminToken,
+    body: {
+      name: 'Karolina Lisowska-Kycia',
+      brand: 'Toyota',
+      model: 'Corolla',
+      triggers: ['photo_video_only'],
+      photoVideoScope: 'video',
+      customTasks: [
+        { category: 'materials', title: 'Zamów banery na salon', details: 'Format 3×1 m.', assignees: ['piotr'] },
+      ],
+    },
+  });
+  check('administrator dodaje zlecenie z panelu (201)', manual.status === 201, JSON.stringify(manual.data));
+  check('zlecenie łączy zadania z typu zlecenia i zadanie własne',
+    manual.data.tasks.length === 2 &&
+      manual.data.tasks.some((t) => t.category === 'video') &&
+      manual.data.tasks.some((t) => t.title === 'Zamów banery na salon'),
+    JSON.stringify(manual.data.tasks.map((t) => t.title)));
+  check('zlecenie z panelu jest od razu przeczytane',
+    db.prepare('SELECT seen FROM requests WHERE id = ?').get(manual.data.requestId).seen === 1);
+  check('zakres foto/video zapisany w bazie',
+    db.prepare('SELECT photo_video_scope AS s FROM requests WHERE id = ?').get(manual.data.requestId).s === 'video');
+  check('własne zadanie ma wskazanego wykonawcę',
+    manual.data.tasks.find((t) => t.title === 'Zamów banery na salon').assignees.join() === 'piotr');
+
+  const manualOnlyCustom = await call('POST', '/api/requests/manual', {
+    token: adminToken,
+    body: {
+      name: 'Karolina Lisowska-Kycia',
+      customTasks: [{ category: 'digital', title: 'Przejrzeć statystyki kampanii', assignees: ['piotr'] }],
+    },
+  });
+  check('samo własne zadanie nie dokłada zadania zastępczego',
+    manualOnlyCustom.data.tasks.length === 1 && manualOnlyCustom.data.tasks[0].title === 'Przejrzeć statystyki kampanii',
+    JSON.stringify(manualOnlyCustom.data.tasks.map((t) => t.title)));
+
+  const adminNotifs = await call('GET', '/api/notifications', { token: adminToken });
+  check('administrator nie dostaje powiadomienia o własnym zleceniu',
+    !adminNotifs.data.notifications.some((n) => n.requestId === manual.data.requestId));
+
   pushStub.close();
 
 }

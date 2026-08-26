@@ -140,6 +140,14 @@ export default function App() {
     return res.tasks;
   };
 
+  // Zlecenie wpisane w panelu przechodzi tą samą drogą co formularz publiczny:
+  // serwer generuje z niego zadania i rozsyła powiadomienia.
+  const handleCreateManualRequest = async (payload) => {
+    const res = await api.createManualRequest(payload);
+    await refreshData();
+    return res.tasks;
+  };
+
   const withRefresh = (fn) => async (...args) => {
     const result = await fn(...args);
     await refreshData();
@@ -213,6 +221,7 @@ export default function App() {
             onTransfer={handleTransfer}
             onMarkSeen={handleMarkSeen}
             onDeleteRequest={handleDeleteRequest}
+            onCreateTasks={handleCreateManualRequest}
             showToast={showToast}
           />
         )}

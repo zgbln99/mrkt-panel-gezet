@@ -2,6 +2,15 @@ export function bm(req) {
   return [req.brand, req.model].filter(Boolean).join(' ') || 'nowa oferta';
 }
 
+/** Odmiana rzeczownika „zadanie” przez liczbę: 1 zadanie, 2 zadania, 5 zadań. */
+export function taskCount(n) {
+  if (n === 1) return '1 zadanie';
+  const last = n % 10;
+  const lastTwo = n % 100;
+  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) return `${n} zadania`;
+  return `${n} zadań`;
+}
+
 export function timeAgo(iso) {
   const diff = Date.now() - new Date(iso).getTime();
   if (Number.isNaN(diff)) return '';

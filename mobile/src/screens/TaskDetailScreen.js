@@ -50,6 +50,11 @@ export default function TaskDetailScreen({ route, navigation }) {
   const canManage = isAdmin || task.assignees.includes(user.id);
   const listingUrl = safeUrl(req.listingLink);
   const others = team.filter((t) => t.id !== user.id);
+  // Zakres pokazujemy wyłącznie przy zgłoszeniu „tylko foto / video” — przy
+  // pozostałych typach niósłby wartość domyślną, która niczego nie mówi.
+  const photoVideoScope = (req.triggers || []).includes('photo_video_only')
+    ? ((meta && meta.photoVideoScopes) || []).find((s) => s.id === (req.photoVideoScope || 'both'))
+    : null;
 
   const run = async (fn, successMessage) => {
     if (busy) return;
@@ -120,6 +125,7 @@ export default function TaskDetailScreen({ route, navigation }) {
         <Fact label="Zgłaszający" value={[req.name, req.department].filter(Boolean).join(' · ')} />
         {req.location ? <Fact label="Salon" value={req.location} /> : null}
         {bm(req) !== 'nowa oferta' ? <Fact label="Marka / model" value={bm(req)} /> : null}
+        {photoVideoScope ? <Fact label="Zakres" value={photoVideoScope.label} /> : null}
         <Fact label="Wpłynęło" value={formatDateTime(req.createdAt)} last={!listingUrl} />
         {listingUrl ? (
           <View style={styles.fact}>

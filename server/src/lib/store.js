@@ -84,6 +84,7 @@ function requestRowToJson(row, tasks) {
     triggers: parseJson(row.triggers, []),
     materials: parseJson(row.materials, []),
     materialsOther: row.materials_other,
+    photoVideoScope: row.photo_video_scope || 'both',
     listingLink: row.listing_link,
     eventName: row.event_name,
     eventDate: row.event_date,

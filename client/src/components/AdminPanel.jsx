@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Plus } from 'lucide-react';
 import TaskCard from './TaskCard.jsx';
 import TaskDetailModal from './TaskDetailModal.jsx';
 import AccountsManager from './AccountsManager.jsx';
+import NewTaskModal from './NewTaskModal.jsx';
 import { bm, formatDateTime } from '../utils.js';
 
 const EMPTY_FILTERS = { category: 'all', assignee: 'all', status: 'all', q: '' };
@@ -16,11 +17,13 @@ export default function AdminPanel({
   onTransfer,
   onMarkSeen,
   onDeleteRequest,
+  onCreateTasks,
   showToast,
 }) {
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [openTaskId, setOpenTaskId] = useState(null);
+  const [showNewTask, setShowNewTask] = useState(false);
 
   // Trzymamy identyfikator, a nie kopię zadania: dane odświeżają się co 15 s,
   // więc otwarte okno pokazuje bieżący stan, a nie zdjęcie sprzed odświeżenia.
@@ -109,6 +112,14 @@ export default function AdminPanel({
           <div className="n">{stats.doneTasks}</div>
           <div className="l">Zadań zrobionych</div>
         </div>
+      </div>
+
+      <div className="controls">
+        <button className="btn primary" onClick={() => setShowNewTask(true)}>
+          <Plus size={14} style={{ marginRight: 5, verticalAlign: -3 }} />
+          Dodaj zadanie
+        </button>
+        <span className="hint-small">Typ zlecenia jak w formularzu — albo własne zadanie z wykonawcą.</span>
       </div>
 
       <div className="controls">
@@ -246,6 +257,16 @@ export default function AdminPanel({
       </details>
 
       <AccountsManager showToast={showToast} minLength={meta.passwordMinLength || 10} />
+
+      {showNewTask && (
+        <NewTaskModal
+          meta={meta}
+          currentUser={currentUser}
+          onClose={() => setShowNewTask(false)}
+          onCreate={onCreateTasks}
+          showToast={showToast}
+        />
+      )}
 
       {openEntry && (
         <TaskDetailModal

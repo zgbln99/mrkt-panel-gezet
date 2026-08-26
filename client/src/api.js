@@ -101,6 +101,7 @@ export const api = {
 
   submitRequest: (payload) => request('/requests', { method: 'POST', body: payload }),
   getRequests: () => request('/requests', { auth: true }),
+  createManualRequest: (payload) => request('/requests/manual', { method: 'POST', auth: true, body: payload }),
   markRequestSeen: (id) => request(`/requests/${encodeURIComponent(id)}/seen`, { method: 'PATCH', auth: true }),
   deleteRequest: (id) => request(`/requests/${encodeURIComponent(id)}`, { method: 'DELETE', auth: true }),
 

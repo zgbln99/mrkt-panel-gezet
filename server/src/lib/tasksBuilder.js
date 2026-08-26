@@ -113,6 +113,13 @@ const REEL_SCRIPTS = {
     { t: '8–13 s', desc: `Cena/rabat na ekranie: ${DETAIL_PROMPT}` },
     { t: '13–15 s', desc: 'Sprzedawca wskazuje na auto.' },
   ])}\n\nCTA: "Zarezerwuj, zanim zabraknie"`,
+  photo_video_only: (req) => `SCENARIUSZ ROLKI (12–15 s)\n\n${reelBeats([
+    { t: '0–2 s', desc: `Ujęcie ogólne: ${bm(req)}${atLoc(req)}.` },
+    { t: '2–8 s', desc: 'Detale — reflektory, wnętrze, felgi; po jednym ujęciu na detal.' },
+    { t: '8–12 s', desc: 'Obrót 360° wokół auta albo ujęcie w ruchu.' },
+    { t: '12–15 s', desc: 'Kadr końcowy z logo Grupa Gezet.' },
+  ])}\n\nUwaga: zgłoszenie obejmuje sam materiał — bez kampanii i publikacji.
+Zakres i sposób wykorzystania ustal ze zgłaszającym.`,
   new_brand: (req) => `SCENARIUSZ ROLKI (15–20 s)\n\n${reelBeats([
     { t: '0–3 s', desc: `Odsłonięcie auta marki ${req.brand || ''}.` },
     { t: '3–10 s', desc: `Ujęcia modeli z gamy marki. Tekst: ${DETAIL_PROMPT}` },
@@ -129,8 +136,12 @@ const MAT_LABELS = { business_cards: 'Wizytówki', flags: 'Flagi', rollups: 'Rol
  * `fallbackAssignees` to osoby, które dostają zadanie "do ustalenia", gdy ze
  * zgłoszenia nie da się wyprowadzić nic konkretnego — domyślnie administratorzy
  * odczytani z bazy, a nie zaszyte na sztywno imię.
+ *
+ * `allowFallback: false` wyłącza to zadanie zastępcze — panel administratora
+ * dokłada do zgłoszenia własne, ręcznie opisane zadania i nie potrzebuje
+ * dodatkowego „do ustalenia”.
  */
-function buildTasks(req, { fallbackAssignees = [] } = {}) {
+function buildTasks(req, { fallbackAssignees = [], allowFallback = true } = {}) {
   const tasks = [];
   const brandModel = bm(req);
   const add = (category, title, details, assignees, draftText) =>
@@ -191,11 +202,23 @@ function buildTasks(req, { fallbackAssignees = [] } = {}) {
     add('events', 'Gadżety — ' + en, '', ['inga', 'martyna']);
     add('digital', 'Social przed/po evencie — ' + en, 'Gotowa propozycja tekstu.', ['inga', 'martyna'], d.social);
   }
+  if (triggers.includes('photo_video_only')) {
+    // Zgłoszenie „tylko foto / video” celowo nie tworzy zadań digital — chodzi
+    // o sam materiał, a nie o kampanię wokół niego.
+    const scope = req.photoVideoScope || 'both';
+    const period = req.campaignPeriod ? ` (termin: ${req.campaignPeriod})` : '';
+    if (scope !== 'video') {
+      add('foto', 'Sesja foto — ' + brandModel + period, 'Sam materiał zdjęciowy — bez kampanii i publikacji.', ['piotr']);
+    }
+    if (scope !== 'foto') {
+      add('video', 'Materiał video — ' + brandModel + period, 'Sam materiał filmowy — bez kampanii i publikacji.', ['bogdan'], REEL_SCRIPTS.photo_video_only(req));
+    }
+  }
   Object.keys(MAT_LABELS).forEach((k) => {
     if (materials.includes(k)) add('materials', 'Zamów: ' + MAT_LABELS[k], req.brand || req.model ? 'Dot. ' + brandModel : '', ['inga', 'martyna']);
   });
   if (req.materialsOther) add('materials', 'Zamów: ' + req.materialsOther, '', ['inga', 'martyna']);
-  if (tasks.length === 0) {
+  if (tasks.length === 0 && allowFallback) {
     add('digital', 'Do ustalenia z zespołem marketingu', req.notes || '', fallbackAssignees);
   }
   return tasks;
