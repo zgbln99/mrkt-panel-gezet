@@ -12,7 +12,7 @@ import { X } from 'lucide-react';
  */
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
-export default function Modal({ title, subtitle, onClose, children, dismissible = true, wide = false }) {
+export default function Modal({ title, subtitle, onClose, children, dismissible = true, wide = false, className = '' }) {
   const cardRef = useRef(null);
   const restoreFocusTo = useRef(null);
 
@@ -59,7 +59,7 @@ export default function Modal({ title, subtitle, onClose, children, dismissible 
   return (
     <div className="modal-overlay" onMouseDown={dismissible ? onClose : undefined}>
       <div
-        className={`modal-card${wide ? ' wide' : ''}`}
+        className={`modal-card${wide ? ' wide' : ''}${className ? ' ' + className : ''}`}
         ref={cardRef}
         role="dialog"
         aria-modal="true"

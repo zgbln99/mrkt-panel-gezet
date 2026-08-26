@@ -681,7 +681,7 @@ poniżej to, co aplikacja robi, żeby jedno nie stało się drogą do drugiego.
 | GET | `/api/health` | publiczny | stan aplikacji (dla monitoringu) |
 | GET | `/api/meta` | publiczny | zespół, kategorie, triggery, materiały, zakresy foto/video |
 | POST | `/api/requests` | publiczny | nowe zgłoszenie → generuje zadania |
-| POST | `/api/requests/manual` | admin | zlecenie dodane z panelu: typ zlecenia i/lub własne zadania |
+| POST | `/api/requests/manual` | admin | zlecenie z panelu: typ zlecenia i/lub własne zadania, z wyborem wykonawców |
 | GET | `/api/requests` | zalogowany | admin: wszystko; pracownik: tylko swoje zadania |
 | PATCH | `/api/requests/:id/seen` | admin | oznacz zgłoszenie jako zobaczone |
 | DELETE | `/api/requests/:id` | admin | usuń zgłoszenie wraz z zadaniami |

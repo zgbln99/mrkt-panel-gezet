@@ -261,6 +261,11 @@ router.post('/manual', requireAuth, blockUntilPasswordChanged, requireAdmin, (re
   const custom = readCustomTasks(body.customTasks);
   if (custom.error) return res.status(400).json({ error: custom.error });
 
+  // Zadania z typu zlecenia rozdzielają się domyślnie wg ról (foto → Piotr,
+  // video → Bogdan itd.). Administrator może to nadpisać i skierować komplet
+  // do wskazanych osób — np. gdy ktoś jest na urlopie.
+  const assigneesOverride = idList(body.assigneesOverride, TEAM_IDS, TEAM.length);
+
   const payload = parsed.payload;
   if (!hasContent(payload) && custom.tasks.length === 0) {
     return res.status(400).json({ error: 'Wybierz typ zlecenia albo dopisz własne zadanie.' });
@@ -270,6 +275,9 @@ router.post('/manual', requireAuth, blockUntilPasswordChanged, requireAdmin, (re
   const generated = hasContent(payload)
     ? buildTasks(payload, { fallbackAssignees: adminIds, allowFallback: custom.tasks.length === 0 })
     : [];
+  if (assigneesOverride.length > 0) {
+    for (const task of generated) task.assignees = [...assigneesOverride];
+  }
   const tasks = [...generated, ...custom.tasks];
 
   const id = saveRequest(payload, tasks, { adminIds, seen: true, skipNotifyUserId: req.user.id });

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Plus, Trash2, Users } from 'lucide-react';
 import Modal from './Modal.jsx';
 import RequestFields, { EMPTY_REQUEST, normalizeRequest, validateRequest } from './RequestFields.jsx';
 import { taskCount } from '../utils.js';
@@ -11,7 +11,7 @@ const EMPTY_TASK = { category: 'digital', title: '', details: '', assignees: [] 
  *
  * Dwie drogi w jednym formularzu, bo w praktyce mieszają się ze sobą:
  * wybór typu zlecenia (dokładnie ta sama lista co na stronie głównej) generuje
- * komplet zadań automatycznie, a sekcja poniżej pozwala dopisać zadanie,
+ * komplet zadań automatycznie, a sekcja niżej pozwala dopisać zadanie,
  * którego żaden szablon nie obejmuje. Wystarczy jedna z nich.
  */
 export default function NewTaskModal({ meta, currentUser, onClose, onCreate, showToast }) {
@@ -19,9 +19,17 @@ export default function NewTaskModal({ meta, currentUser, onClose, onCreate, sho
   // od samego marketingu, a nie od handlowców — podstawianie ich działu
   // zapisywałoby w zgłoszeniu nieprawdziwy kontekst.
   const [form, setForm] = useState({ ...EMPTY_REQUEST, name: currentUser.name || '', department: 'Inny dział' });
+  const [assigneesOverride, setAssigneesOverride] = useState([]);
   const [customTasks, setCustomTasks] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const teamById = useMemo(() => Object.fromEntries(meta.team.map((t) => [t.id, t])), [meta.team]);
+
+  // Typ zlecenia sam z siebie tworzy zadania — dopiero wtedy pytanie „kto ma to
+  // zrobić" ma sens. Przy samym własnym zadaniu wykonawcę wskazuje się przy nim.
+  const generatesTasks =
+    form.triggers.length > 0 || form.materials.length > 0 || form.materialsOther.trim() !== '';
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   const toggle = (key, value) =>
@@ -29,6 +37,11 @@ export default function NewTaskModal({ meta, currentUser, onClose, onCreate, sho
       ...f,
       [key]: f[key].includes(value) ? f[key].filter((x) => x !== value) : [...f[key], value],
     }));
+
+  const toggleOverride = (personId) =>
+    setAssigneesOverride((list) =>
+      list.includes(personId) ? list.filter((a) => a !== personId) : [...list, personId]
+    );
 
   const setTask = (index, key, value) =>
     setCustomTasks((list) => list.map((task, i) => (i === index ? { ...task, [key]: value } : task)));
@@ -77,6 +90,7 @@ export default function NewTaskModal({ meta, currentUser, onClose, onCreate, sho
     try {
       const tasks = await onCreate({
         ...normalizeRequest(form),
+        assigneesOverride: generatesTasks ? assigneesOverride : [],
         customTasks: customTasks.map((task) => ({
           category: task.category,
           title: task.title.trim(),
@@ -93,34 +107,99 @@ export default function NewTaskModal({ meta, currentUser, onClose, onCreate, sho
     }
   };
 
+  const overrideLabel =
+    assigneesOverride.length === 0
+      ? 'Automatycznie — wg ról w zespole'
+      : assigneesOverride.map((id) => (teamById[id] ? teamById[id].name : id)).join(', ');
+
   return (
     <Modal
       title="Dodaj zadanie"
-      subtitle="Wybierz typ zlecenia — zadania powstaną automatycznie — albo dopisz własne zadanie na dole."
+      subtitle="Wybierz typ zlecenia — zadania powstaną automatycznie — albo dopisz własne zadanie niżej."
       onClose={onClose}
       wide
+      className="task-modal"
     >
       <form className="td-body" onSubmit={submit} noValidate>
-        <RequestFields
-          meta={meta}
-          form={form}
-          onSet={set}
-          onToggle={toggle}
-          idPrefix="nt"
-          nameLabel="Zlecający *"
-        />
+        <section className="nt-step">
+          <h4 className="nt-step-head">
+            <span className="nt-step-n">1</span> Czego dotyczy zlecenie
+          </h4>
+          <RequestFields
+            meta={meta}
+            form={form}
+            onSet={set}
+            onToggle={toggle}
+            idPrefix="nt"
+            nameLabel="Zlecający *"
+          />
+        </section>
 
-        <fieldset className="field full fieldset" style={{ marginTop: 18 }}>
-          <legend>Własne zadania (opcjonalnie)</legend>
+        {generatesTasks && (
+          <section className="nt-step">
+            <h4 className="nt-step-head">
+              <span className="nt-step-n">2</span> Kto ma to zrobić
+            </h4>
+            <p className="hint-small nt-step-hint">
+              Zadania z typu zlecenia trafiają domyślnie do osób odpowiedzialnych za dany obszar
+              (foto → Piotr, video → Bogdan, social → Inga i Martyna). Wskaż osoby, żeby to nadpisać —
+              np. gdy ktoś jest na urlopie.
+            </p>
+            <div className="row">
+              <button
+                type="button"
+                className="chip person"
+                aria-pressed={assigneesOverride.length === 0}
+                onClick={() => setAssigneesOverride([])}
+              >
+                <Users size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
+                Automatycznie
+              </button>
+              {meta.team.map((person) => (
+                <button
+                  key={person.id}
+                  type="button"
+                  className="chip person"
+                  aria-pressed={assigneesOverride.includes(person.id)}
+                  title={person.role}
+                  onClick={() => toggleOverride(person.id)}
+                >
+                  {person.name}
+                </button>
+              ))}
+            </div>
+            <p className="hint-small nt-summary">Przypisanie: {overrideLabel}</p>
+          </section>
+        )}
+
+        <section className="nt-step">
+          <h4 className="nt-step-head">
+            <span className="nt-step-n">{generatesTasks ? 3 : 2}</span> Własne zadania
+            <span className="nt-step-opt">{customTasks.length > 0 ? taskCount(customTasks.length) : 'opcjonalnie'}</span>
+          </h4>
 
           {customTasks.length === 0 && (
-            <p className="hint-small" style={{ margin: '0 0 8px' }}>
-              Nic tu nie musi być — jeśli wybrałeś(-aś) typ zlecenia, zadania powstaną same.
+            <p className="hint-small nt-step-hint">
+              Nic tu nie musi być — jeśli wybrałeś(-aś) typ zlecenia, zadania powstaną same. Dopisz
+              zadanie, którego żaden szablon nie obejmuje.
             </p>
           )}
 
           {customTasks.map((task, index) => (
             <div className="custom-task" key={index}>
+              <div className="custom-task-hd">
+                <span className="custom-task-n">Zadanie {index + 1}</span>
+                <button
+                  type="button"
+                  className="btn small danger"
+                  onClick={() => removeTask(index)}
+                  aria-label={`Usuń zadanie ${index + 1}`}
+                >
+                  <Trash2 size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
+                  Usuń
+                </button>
+              </div>
+
               <div className="form-grid">
                 <div className="field">
                   <label htmlFor={`nt-task-${index}-category`}>Kategoria</label>
@@ -159,7 +238,7 @@ export default function NewTaskModal({ meta, currentUser, onClose, onCreate, sho
                 </div>
               </div>
 
-              <fieldset className="field fieldset" style={{ marginTop: 8 }}>
+              <fieldset className="field fieldset" style={{ marginTop: 10 }}>
                 <legend>Osoby odpowiedzialne *</legend>
                 <div className="row">
                   {meta.team.map((person) => (
@@ -176,16 +255,6 @@ export default function NewTaskModal({ meta, currentUser, onClose, onCreate, sho
                   ))}
                 </div>
               </fieldset>
-
-              <button
-                type="button"
-                className="btn small danger"
-                style={{ marginTop: 10 }}
-                onClick={() => removeTask(index)}
-              >
-                <Trash2 size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
-                Usuń to zadanie
-              </button>
             </div>
           ))}
 
@@ -193,21 +262,25 @@ export default function NewTaskModal({ meta, currentUser, onClose, onCreate, sho
             <Plus size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
             Dodaj własne zadanie
           </button>
-        </fieldset>
+        </section>
 
-        <div className="submit-row">
-          <button className="btn primary" type="submit" disabled={busy}>
-            {busy ? 'Zapisywanie…' : 'Utwórz zadania'}
-          </button>
-          <button className="btn" type="button" onClick={onClose} disabled={busy}>
-            Anuluj
-          </button>
+        {/* Pasek akcji przyklejony do dołu: formularz bywa długi, a przycisk
+            „Utwórz zadania” musi być pod ręką bez przewijania na sam koniec. */}
+        <div className="nt-actions">
+          {error && (
+            <p className="modal-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="submit-row">
+            <button className="btn primary" type="submit" disabled={busy}>
+              {busy ? 'Zapisywanie…' : 'Utwórz zadania'}
+            </button>
+            <button className="btn" type="button" onClick={onClose} disabled={busy}>
+              Anuluj
+            </button>
+          </div>
         </div>
-        {error && (
-          <p className="modal-error" role="alert">
-            {error}
-          </p>
-        )}
       </form>
     </Modal>
   );

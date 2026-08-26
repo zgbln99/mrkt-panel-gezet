@@ -459,6 +459,28 @@ async function main() {
   check('własne zadanie ma wskazanego wykonawcę',
     manual.data.tasks.find((t) => t.title === 'Zamów banery na salon').assignees.join() === 'piotr');
 
+  const manualOverride = await call('POST', '/api/requests/manual', {
+    token: adminToken,
+    body: {
+      name: 'Karolina Lisowska-Kycia',
+      brand: 'Kia',
+      triggers: ['photo_video_only'],
+      assigneesOverride: ['piotr'],
+    },
+  });
+  check('przypisanie z panelu nadpisuje domyślny podział wg ról',
+    manualOverride.data.tasks.length === 2 && manualOverride.data.tasks.every((t) => t.assignees.join() === 'piotr'),
+    JSON.stringify(manualOverride.data.tasks.map((t) => t.assignees)));
+
+  const manualBadOverride = await call('POST', '/api/requests/manual', {
+    token: adminToken,
+    body: { name: 'Karolina', brand: 'Kia', triggers: ['photo_video_only'], assigneesOverride: ['nie-ma-takiego'] },
+  });
+  check('nieznana osoba w przypisaniu jest pomijana, podział zostaje domyślny',
+    manualBadOverride.data.tasks.some((t) => t.assignees.includes('piotr')) &&
+      manualBadOverride.data.tasks.some((t) => t.assignees.includes('bogdan')),
+    JSON.stringify(manualBadOverride.data.tasks.map((t) => t.assignees)));
+
   const manualOnlyCustom = await call('POST', '/api/requests/manual', {
     token: adminToken,
     body: {

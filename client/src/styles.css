@@ -227,10 +227,36 @@ body {
 
 .transfer-form input { border: 1px solid var(--line-strong); border-radius: 6px; padding: 7px 9px; font-size: 12.8px; font-family: var(--font-body); background: var(--surface); color: var(--ink); }
 
-/* Okno „Dodaj zadanie” — każde ręcznie dopisane zadanie w osobnej ramce, żeby
-   przy kilku naraz było widać, gdzie kończy się jedno, a zaczyna następne. */
+/* ---------------- okno „Dodaj zadanie” (panel administratora) ---------------- */
+
+/* Szersze niż okno szczegółów zadania: mieści siatkę pól zgłoszenia obok
+   siebie, a lista typów zlecenia układa się w trzy kolumny zamiast dwóch. */
+.modal-card.wide.task-modal { max-width: 880px; }
+
+.nt-step { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 18px; }
+.nt-step:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+.nt-step-head { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-soft); margin: 0 0 12px; }
+.nt-step-n { display: inline-flex; align-items: center; justify-content: center; width: 19px; height: 19px; border-radius: 50%; background: var(--ink); color: var(--surface); font-size: 10.5px; flex: none; }
+.nt-step-opt { margin-left: auto; color: var(--ink-faint); font-weight: 500; text-transform: none; letter-spacing: 0; }
+.nt-step-hint { margin: 0 0 10px; line-height: 1.5; }
+.nt-summary { margin: 10px 0 0; color: var(--ink-soft); }
+
+/* Każde ręcznie dopisane zadanie w osobnej ramce, żeby przy kilku naraz było
+   widać, gdzie kończy się jedno, a zaczyna następne. */
 .custom-task { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
 .custom-task .field label { font-size: 12px; }
+.custom-task-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.custom-task-n { font-family: var(--font-mono); font-size: 10.8px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint); }
+
+/* Pasek akcji przyklejony do dołu przewijanej treści okna — przy rozbudowanym
+   formularzu przycisk „Utwórz zadania” nie ucieka poza ekran. */
+.nt-actions { position: sticky; bottom: -6px; margin: 18px -6px -6px; padding: 12px 6px 6px; background: var(--surface); border-top: 1px solid var(--line); }
+.nt-actions .submit-row { margin-top: 0; }
+.nt-actions .modal-error { margin: 0 0 8px; }
+
+@media (max-width: 640px) {
+  .nt-step-head { flex-wrap: wrap; }
+}
 .bell-item:disabled { cursor: default; opacity: 1; }
 
 /* Widoczny fokus klawiatury — wcześniej przeglądarkowy zarys ginął na
