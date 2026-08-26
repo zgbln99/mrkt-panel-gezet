@@ -22,7 +22,11 @@ die()  { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 cd "$APP_DIR"
 
 info "Kopia zapasowa bazy przed aktualizacją"
-sudo -u "$APP_USER" node server/scripts/backup.js "$APP_DIR/backups"
+# Uruchamiane z katalogu server/, a nie z katalogu repozytorium: dotenv szuka
+# pliku .env względem katalogu roboczego, a ten leży w server/. Uruchomienie
+# stąd kończyło się błędem „JWT_SECRET jest pusty” i przerywało aktualizację,
+# zanim cokolwiek się wydarzyło. Tak samo robi to usługa gezet-backup.service.
+( cd "$APP_DIR/server" && sudo -u "$APP_USER" node scripts/backup.js "$APP_DIR/backups" )
 
 if [[ -d .git ]]; then
     info "Pobieram zmiany z repozytorium"
